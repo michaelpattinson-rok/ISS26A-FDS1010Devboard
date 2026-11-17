@@ -1,0 +1,1142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<export version="E">
+  <design>
+    <source>/Users/xploregamerz/Library/Mobile Documents/com~apple~CloudDocs/ISS/Agents/Implementation/Rev E Order Fixes 2026-10-27/Hardware/CAD/FDS1010_Budget_E.kicad_sch</source>
+    <date>2026-10-27T23:52:22</date>
+    <tool>Eeschema 10.0.6</tool>
+    <sheet number="1" name="/" tstamps="/">
+      <title_block>
+        <title>FDS1010 Devboard - Rev E.1 - Pico / AVR</title>
+        <company>ISS TEAM A</company>
+        <rev>E.1</rev>
+        <date>2026-10-27</date>
+        <source>FDS1010_Budget_E.kicad_sch</source>
+        <comment number="1" value=""/>
+        <comment number="2" value=""/>
+        <comment number="3" value=""/>
+        <comment number="4" value=""/>
+        <comment number="5" value=""/>
+        <comment number="6" value=""/>
+        <comment number="7" value=""/>
+        <comment number="8" value=""/>
+        <comment number="9" value=""/>
+      </title_block>
+    </sheet>
+  </design>
+  <components>
+    <comp ref="C1">
+      <value>1u</value>
+      <footprint>FDSRevE:C1</footprint>
+      <fields>
+        <field name="MPN">FG28X5R1H105KRT00</field>
+        <field name="Role">1u</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:C1</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="C" description="Unpolarized capacitor"/>
+      <property name="MPN" value="FG28X5R1H105KRT00"/>
+      <property name="Role" value="1u"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="cap capacitor"/>
+      <property name="ki_fp_filters" value="C1 C2 C3 C4 C5 C6 C7 C8"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>405d728e-4dbc-59c6-8837-39e12344c34f</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C2">
+      <value>100n</value>
+      <footprint>FDSRevE:C2</footprint>
+      <fields>
+        <field name="MPN">FG18X7R1H104KNT00</field>
+        <field name="Role">100n</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:C2</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="C" description="Unpolarized capacitor"/>
+      <property name="MPN" value="FG18X7R1H104KNT00"/>
+      <property name="Role" value="100n"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="cap capacitor"/>
+      <property name="ki_fp_filters" value="C1 C2 C3 C4 C5 C6 C7 C8"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>cde591fa-362b-53e9-9e8a-ffdfc7a35c3e</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C3">
+      <value>1u</value>
+      <footprint>FDSRevE:C3</footprint>
+      <fields>
+        <field name="MPN">FG28X5R1H105KRT00</field>
+        <field name="Role">1u</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:C3</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="C" description="Unpolarized capacitor"/>
+      <property name="MPN" value="FG28X5R1H105KRT00"/>
+      <property name="Role" value="1u"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="cap capacitor"/>
+      <property name="ki_fp_filters" value="C1 C2 C3 C4 C5 C6 C7 C8"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>b11b7c58-4ef6-58da-84ec-91b504d0d6ec</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C4">
+      <value>10p C0G</value>
+      <footprint>FDSRevE:C4</footprint>
+      <fields>
+        <field name="MPN">C317C100J1G5TA</field>
+        <field name="Role">10p C0G</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:C4</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="C" description="Unpolarized capacitor"/>
+      <property name="MPN" value="C317C100J1G5TA"/>
+      <property name="Role" value="10p C0G"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="cap capacitor"/>
+      <property name="ki_fp_filters" value="C1 C2 C3 C4 C5 C6 C7 C8"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>40ca4176-c1c1-588c-8a66-768d2b197a7b</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C5">
+      <value>10n C0G</value>
+      <footprint>FDSRevE:C5</footprint>
+      <fields>
+        <field name="MPN">FG24C0G2E103JNT00</field>
+        <field name="Role">10n C0G</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:C5</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="C" description="Unpolarized capacitor"/>
+      <property name="MPN" value="FG24C0G2E103JNT00"/>
+      <property name="Role" value="10n C0G"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="cap capacitor"/>
+      <property name="ki_fp_filters" value="C1 C2 C3 C4 C5 C6 C7 C8"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>2341fa62-5ae6-562b-86c3-60e10a450836</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C6">
+      <value>100p C0G</value>
+      <footprint>FDSRevE:C6</footprint>
+      <fields>
+        <field name="MPN">FG28C0G1H101JNT06</field>
+        <field name="Role">100p C0G</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:C6</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="C" description="Unpolarized capacitor"/>
+      <property name="MPN" value="FG28C0G1H101JNT06"/>
+      <property name="Role" value="100p C0G"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="cap capacitor"/>
+      <property name="ki_fp_filters" value="C1 C2 C3 C4 C5 C6 C7 C8"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>cdb21475-6072-5903-973a-aced9d94ebe8</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C7">
+      <value>10n C0G</value>
+      <footprint>FDSRevE:C7</footprint>
+      <fields>
+        <field name="MPN">FG24C0G2E103JNT00</field>
+        <field name="Role">10n C0G</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:C7</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="C" description="Unpolarized capacitor"/>
+      <property name="MPN" value="FG24C0G2E103JNT00"/>
+      <property name="Role" value="10n C0G"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="cap capacitor"/>
+      <property name="ki_fp_filters" value="C1 C2 C3 C4 C5 C6 C7 C8"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>dd71cdf2-7635-5dd3-ae68-e5e18903511e</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C8">
+      <value>1n C0G</value>
+      <footprint>FDSRevE:C8</footprint>
+      <fields>
+        <field name="MPN">FA18C0G2A102JNU00</field>
+        <field name="Role">1n C0G</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:C8</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="C" description="Unpolarized capacitor"/>
+      <property name="MPN" value="FA18C0G2A102JNU00"/>
+      <property name="Role" value="1n C0G"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="cap capacitor"/>
+      <property name="ki_fp_filters" value="C1 C2 C3 C4 C5 C6 C7 C8"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>4d27d56f-024d-5724-a118-2325914c2d65</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="D1">
+      <value>BAT85S</value>
+      <footprint>FDSRevE:D1</footprint>
+      <datasheet>https://www.vishay.com/docs/85513/bat85s.pdf</datasheet>
+      <fields>
+        <field name="MPN">BAT85S-TAP</field>
+        <field name="Role">BAT85S</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:D1</field>
+        <field name="Datasheet">https://www.vishay.com/docs/85513/bat85s.pdf</field>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="D" description="Schottky diode"/>
+      <property name="MPN" value="BAT85S-TAP"/>
+      <property name="Role" value="BAT85S"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="diode Schottky"/>
+      <property name="ki_fp_filters" value="D1 D2"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>afe92722-9e83-5c33-9765-48a3d18cc856</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="D2">
+      <value>BAT85S</value>
+      <footprint>FDSRevE:D2</footprint>
+      <datasheet>https://www.vishay.com/docs/85513/bat85s.pdf</datasheet>
+      <fields>
+        <field name="MPN">BAT85S-TAP</field>
+        <field name="Role">BAT85S</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:D2</field>
+        <field name="Datasheet">https://www.vishay.com/docs/85513/bat85s.pdf</field>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="D" description="Schottky diode"/>
+      <property name="MPN" value="BAT85S-TAP"/>
+      <property name="Role" value="BAT85S"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="diode Schottky"/>
+      <property name="ki_fp_filters" value="D1 D2"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>d8239777-2494-52b0-bb4a-cfd87e04d387</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="J1">
+      <value>FDS1010</value>
+      <footprint>FDSRevE:J1</footprint>
+      <fields>
+        <field name="MPN">M20-9990245</field>
+        <field name="Role">FDS1010</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:J1</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="J2" description="Generic connector, single row, 01x02, script generated (kicad-library-utils/schlib/autogen/connector/)"/>
+      <property name="MPN" value="M20-9990245"/>
+      <property name="Role" value="FDS1010"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="connector"/>
+      <property name="ki_fp_filters" value="J1 J4"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>a9c440fc-c544-57dc-907d-dfd4a14a41de</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="J2">
+      <value>PICO 2</value>
+      <footprint>FDSRevE:J2</footprint>
+      <fields>
+        <field name="MPN">M20-9990345</field>
+        <field name="Role">PICO 2</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:J2</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="J3" description="Generic connector, single row, 01x03, script generated (kicad-library-utils/schlib/autogen/connector/)"/>
+      <property name="MPN" value="M20-9990345"/>
+      <property name="Role" value="PICO 2"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="connector"/>
+      <property name="ki_fp_filters" value="J2"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>7b914878-a8cb-585c-afaf-4985d847a81c</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+            <pin num="3"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="J3">
+      <value>DIAGNOSTICS</value>
+      <footprint>FDSRevE:J3</footprint>
+      <fields>
+        <field name="MPN">M20-9990645</field>
+        <field name="Role">DIAGNOSTICS</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:J3</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="J6" description="Generic connector, single row, 01x06, script generated (kicad-library-utils/schlib/autogen/connector/)"/>
+      <property name="MPN" value="M20-9990645"/>
+      <property name="Role" value="DIAGNOSTICS"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="connector"/>
+      <property name="ki_fp_filters" value="J3"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>417d6f07-19de-5164-9c61-a45defa62f75</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+            <pin num="3"/>
+            <pin num="4"/>
+            <pin num="5"/>
+            <pin num="6"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="J4">
+      <value>GAIN</value>
+      <footprint>FDSRevE:J4</footprint>
+      <fields>
+        <field name="MPN">M20-9990245</field>
+        <field name="Role">GAIN</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:J4</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="J2" description="Generic connector, single row, 01x02, script generated (kicad-library-utils/schlib/autogen/connector/)"/>
+      <property name="MPN" value="M20-9990245"/>
+      <property name="Role" value="GAIN"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="connector"/>
+      <property name="ki_fp_filters" value="J1 J4"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>c55489c1-261c-5f77-84ac-4d88fe49177b</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R1">
+      <value>10k</value>
+      <footprint>FDSRevE:R1</footprint>
+      <fields>
+        <field name="MPN">MFR-25FRF52-10K</field>
+        <field name="Role">10k</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:R1</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="R" description="Resistor"/>
+      <property name="MPN" value="MFR-25FRF52-10K"/>
+      <property name="Role" value="10k"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="R res resistor"/>
+      <property name="ki_fp_filters" value="R1 R10 R11 R12 R2 R3 R4 R5 R6 R7 R8 R9"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>9766776f-1407-56b7-b5d8-75a3b52b71df</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R2">
+      <value>10k</value>
+      <footprint>FDSRevE:R2</footprint>
+      <fields>
+        <field name="MPN">MFR-25FRF52-10K</field>
+        <field name="Role">10k</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:R2</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="R" description="Resistor"/>
+      <property name="MPN" value="MFR-25FRF52-10K"/>
+      <property name="Role" value="10k"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="R res resistor"/>
+      <property name="ki_fp_filters" value="R1 R10 R11 R12 R2 R3 R4 R5 R6 R7 R8 R9"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>98d334ed-4e38-5906-806c-0dec7889302d</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R3">
+      <value>100M</value>
+      <footprint>FDSRevE:R3</footprint>
+      <fields>
+        <field name="MPN">MHR0317SA107F70</field>
+        <field name="Role">100M</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:R3</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="R" description="Resistor"/>
+      <property name="MPN" value="MHR0317SA107F70"/>
+      <property name="Role" value="100M"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="R res resistor"/>
+      <property name="ki_fp_filters" value="R1 R10 R11 R12 R2 R3 R4 R5 R6 R7 R8 R9"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>a57938ee-117e-508f-8f7d-c79216089501</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R4">
+      <value>10k</value>
+      <footprint>FDSRevE:R4</footprint>
+      <fields>
+        <field name="MPN">MFR-25FRF52-10K</field>
+        <field name="Role">10k</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:R4</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="R" description="Resistor"/>
+      <property name="MPN" value="MFR-25FRF52-10K"/>
+      <property name="Role" value="10k"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="R res resistor"/>
+      <property name="ki_fp_filters" value="R1 R10 R11 R12 R2 R3 R4 R5 R6 R7 R8 R9"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>286de4ef-123e-5f66-965a-cad0e3284743</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R5">
+      <value>1M</value>
+      <footprint>FDSRevE:R5</footprint>
+      <fields>
+        <field name="MPN">MFR-25FRF52-1M</field>
+        <field name="Role">1M</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:R5</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="R" description="Resistor"/>
+      <property name="MPN" value="MFR-25FRF52-1M"/>
+      <property name="Role" value="1M"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="R res resistor"/>
+      <property name="ki_fp_filters" value="R1 R10 R11 R12 R2 R3 R4 R5 R6 R7 R8 R9"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>6fcc1ec1-dbe2-5732-861b-632199e91c12</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R6">
+      <value>52.3k</value>
+      <footprint>FDSRevE:R6</footprint>
+      <fields>
+        <field name="MPN">MFR-25FBF52-52K3</field>
+        <field name="Role">52.3k</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:R6</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="R" description="Resistor"/>
+      <property name="MPN" value="MFR-25FBF52-52K3"/>
+      <property name="Role" value="52.3k"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="R res resistor"/>
+      <property name="ki_fp_filters" value="R1 R10 R11 R12 R2 R3 R4 R5 R6 R7 R8 R9"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>347ff518-767e-5666-bfec-b89fc2ed03bb</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R7">
+      <value>1k</value>
+      <footprint>FDSRevE:R7</footprint>
+      <fields>
+        <field name="MPN">RNF14FTD1K00</field>
+        <field name="Role">1k</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:R7</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="R" description="Resistor"/>
+      <property name="MPN" value="RNF14FTD1K00"/>
+      <property name="Role" value="1k"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="R res resistor"/>
+      <property name="ki_fp_filters" value="R1 R10 R11 R12 R2 R3 R4 R5 R6 R7 R8 R9"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>f5ca72f3-05ae-5d23-b254-c08a86c6a4b5</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R8">
+      <value>1k</value>
+      <footprint>FDSRevE:R8</footprint>
+      <fields>
+        <field name="MPN">RNF14FTD1K00</field>
+        <field name="Role">1k</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:R8</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="R" description="Resistor"/>
+      <property name="MPN" value="RNF14FTD1K00"/>
+      <property name="Role" value="1k"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="R res resistor"/>
+      <property name="ki_fp_filters" value="R1 R10 R11 R12 R2 R3 R4 R5 R6 R7 R8 R9"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>eeb16bfb-e786-5e26-a42c-7b596e2f925f</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R9">
+      <value>10k</value>
+      <footprint>FDSRevE:R9</footprint>
+      <fields>
+        <field name="MPN">MFR-25FRF52-10K</field>
+        <field name="Role">10k</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:R9</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="R" description="Resistor"/>
+      <property name="MPN" value="MFR-25FRF52-10K"/>
+      <property name="Role" value="10k"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="R res resistor"/>
+      <property name="ki_fp_filters" value="R1 R10 R11 R12 R2 R3 R4 R5 R6 R7 R8 R9"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>4bc3c5d1-38cb-573b-a27c-229c4dfd6dc9</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R10">
+      <value>49.9k</value>
+      <footprint>FDSRevE:R10</footprint>
+      <fields>
+        <field name="MPN">MFR-25FTE52-49K9</field>
+        <field name="Role">49.9k</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:R10</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="R" description="Resistor"/>
+      <property name="MPN" value="MFR-25FTE52-49K9"/>
+      <property name="Role" value="49.9k"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="R res resistor"/>
+      <property name="ki_fp_filters" value="R1 R10 R11 R12 R2 R3 R4 R5 R6 R7 R8 R9"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>346d531e-cd06-5375-93ee-b70999ccc812</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R11">
+      <value>1k</value>
+      <footprint>FDSRevE:R11</footprint>
+      <fields>
+        <field name="MPN">RNF14FTD1K00</field>
+        <field name="Role">1k</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:R11</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="R" description="Resistor"/>
+      <property name="MPN" value="RNF14FTD1K00"/>
+      <property name="Role" value="1k"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="R res resistor"/>
+      <property name="ki_fp_filters" value="R1 R10 R11 R12 R2 R3 R4 R5 R6 R7 R8 R9"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>e4b58b69-d5cb-5384-b135-e50c9411d386</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R12">
+      <value>100R</value>
+      <footprint>FDSRevE:R12</footprint>
+      <fields>
+        <field name="MPN">RNF14FTD100R</field>
+        <field name="Role">100R</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:R12</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="R" description="Resistor"/>
+      <property name="MPN" value="RNF14FTD100R"/>
+      <property name="Role" value="100R"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="R res resistor"/>
+      <property name="ki_fp_filters" value="R1 R10 R11 R12 R2 R3 R4 R5 R6 R7 R8 R9"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>fd6088a6-1e22-5da4-91a7-2d179c563653</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="U1">
+      <value>MCP6024-E/P</value>
+      <footprint>FDSRevE:U1</footprint>
+      <datasheet>https://ww1.microchip.com/downloads/en/DeviceDoc/20001685E.pdf</datasheet>
+      <fields>
+        <field name="MPN">MCP6024-E/P</field>
+        <field name="Role">MCP6024-E/P</field>
+        <field name="Assembly">THROUGH-HOLE / TOP</field>
+        <field name="Footprint">FDSRevE:U1</field>
+        <field name="Datasheet">https://ww1.microchip.com/downloads/en/DeviceDoc/20001685E.pdf</field>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="FDSRevE" part="MCP6024_EP" description="MCP6024-E/P quad 10MHz RRIO operational amplifier; Microchip PDIP-14; 1 OUTA,2 INA-,3 INA+,4 VDD,5 INB+,6 INB-,7 OUTB,8 OUTC,9 INC-,10 INC+,11 VSS,12 IND+,13 IND-,14 OUTD"/>
+      <property name="MPN" value="MCP6024-E/P"/>
+      <property name="Role" value="MCP6024-E/P"/>
+      <property name="Assembly" value="THROUGH-HOLE / TOP"/>
+      <property name="Sheetname" value="FDS1010_Budget_E"/>
+      <property name="Sheetfile" value="FDS1010_Budget_E.kicad_sch"/>
+      <property name="ki_keywords" value="quad opamp"/>
+      <property name="ki_fp_filters" value="U1"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>f3e4ac36-8cb7-509c-93e4-bf5b04e15b5e 526d5271-d495-53ce-bdd4-1cc5654581cf 1a4c8fea-1dc7-51b6-8952-c694b217944a a034fe4b-7c02-5703-b595-8c18b5db5c68 123774c1-cece-5e56-b40d-3e0fc1076158</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="3"/>
+            <pin num="2"/>
+            <pin num="1"/>
+          </pins>
+        </unit>
+        <unit name="B">
+          <pins>
+            <pin num="5"/>
+            <pin num="6"/>
+            <pin num="7"/>
+          </pins>
+        </unit>
+        <unit name="C">
+          <pins>
+            <pin num="10"/>
+            <pin num="9"/>
+            <pin num="8"/>
+          </pins>
+        </unit>
+        <unit name="D">
+          <pins>
+            <pin num="12"/>
+            <pin num="13"/>
+            <pin num="14"/>
+          </pins>
+        </unit>
+        <unit name="E">
+          <pins>
+            <pin num="4"/>
+            <pin num="11"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+  </components>
+  <libparts>
+    <libpart lib="FDSRevE" part="C">
+      <description>Unpolarized capacitor</description>
+      <footprints>
+        <fp>C1</fp>
+        <fp>C2</fp>
+        <fp>C3</fp>
+        <fp>C4</fp>
+        <fp>C5</fp>
+        <fp>C6</fp>
+        <fp>C7</fp>
+        <fp>C8</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">C</field>
+        <field name="Value">C</field>
+        <field name="Footprint"/>
+        <field name="Datasheet"/>
+        <field name="Description">Unpolarized capacitor</field>
+      </fields>
+      <pins>
+        <pin num="1" name="" type="passive"/>
+        <pin num="2" name="" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="FDSRevE" part="D">
+      <description>Schottky diode</description>
+      <docs>https://www.vishay.com/docs/85513/bat85s.pdf</docs>
+      <footprints>
+        <fp>D1</fp>
+        <fp>D2</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">D</field>
+        <field name="Value">D_Schottky</field>
+        <field name="Footprint"/>
+        <field name="Datasheet">https://www.vishay.com/docs/85513/bat85s.pdf</field>
+        <field name="Description">Schottky diode</field>
+      </fields>
+      <pins>
+        <pin num="1" name="K" type="passive"/>
+        <pin num="2" name="A" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="FDSRevE" part="J2">
+      <description>Generic connector, single row, 01x02, script generated (kicad-library-utils/schlib/autogen/connector/)</description>
+      <footprints>
+        <fp>J1</fp>
+        <fp>J4</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">J</field>
+        <field name="Value">Conn_01x02</field>
+        <field name="Footprint"/>
+        <field name="Datasheet"/>
+        <field name="Description">Generic connector, single row, 01x02, script generated (kicad-library-utils/schlib/autogen/connector/)</field>
+      </fields>
+      <pins>
+        <pin num="1" name="Pin_1" type="passive"/>
+        <pin num="2" name="Pin_2" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="FDSRevE" part="J3">
+      <description>Generic connector, single row, 01x03, script generated (kicad-library-utils/schlib/autogen/connector/)</description>
+      <footprints>
+        <fp>J2</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">J</field>
+        <field name="Value">Conn_01x03</field>
+        <field name="Footprint"/>
+        <field name="Datasheet"/>
+        <field name="Description">Generic connector, single row, 01x03, script generated (kicad-library-utils/schlib/autogen/connector/)</field>
+      </fields>
+      <pins>
+        <pin num="1" name="Pin_1" type="passive"/>
+        <pin num="2" name="Pin_2" type="passive"/>
+        <pin num="3" name="Pin_3" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="FDSRevE" part="J6">
+      <description>Generic connector, single row, 01x06, script generated (kicad-library-utils/schlib/autogen/connector/)</description>
+      <footprints>
+        <fp>J3</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">J</field>
+        <field name="Value">Conn_01x06</field>
+        <field name="Footprint"/>
+        <field name="Datasheet"/>
+        <field name="Description">Generic connector, single row, 01x06, script generated (kicad-library-utils/schlib/autogen/connector/)</field>
+      </fields>
+      <pins>
+        <pin num="1" name="Pin_1" type="passive"/>
+        <pin num="2" name="Pin_2" type="passive"/>
+        <pin num="3" name="Pin_3" type="passive"/>
+        <pin num="4" name="Pin_4" type="passive"/>
+        <pin num="5" name="Pin_5" type="passive"/>
+        <pin num="6" name="Pin_6" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="FDSRevE" part="MCP6024_EP">
+      <description>MCP6024-E/P quad 10MHz RRIO operational amplifier; Microchip PDIP-14; 1 OUTA,2 INA-,3 INA+,4 VDD,5 INB+,6 INB-,7 OUTB,8 OUTC,9 INC-,10 INC+,11 VSS,12 IND+,13 IND-,14 OUTD</description>
+      <docs>https://ww1.microchip.com/downloads/en/DeviceDoc/20001685E.pdf</docs>
+      <footprints>
+        <fp>U1</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">U</field>
+        <field name="Value">MCP6024-E/P</field>
+        <field name="Footprint"/>
+        <field name="Datasheet">https://ww1.microchip.com/downloads/en/DeviceDoc/20001685E.pdf</field>
+        <field name="Description">MCP6024-E/P quad 10MHz RRIO operational amplifier; Microchip PDIP-14; 1 OUTA,2 INA-,3 INA+,4 VDD,5 INB+,6 INB-,7 OUTB,8 OUTC,9 INC-,10 INC+,11 VSS,12 IND+,13 IND-,14 OUTD</field>
+      </fields>
+      <pins>
+        <pin num="1" name="" type="output"/>
+        <pin num="2" name="-" type="input"/>
+        <pin num="3" name="+" type="input"/>
+        <pin num="4" name="V+" type="power_in"/>
+        <pin num="5" name="+" type="input"/>
+        <pin num="6" name="-" type="input"/>
+        <pin num="7" name="" type="output"/>
+        <pin num="8" name="" type="output"/>
+        <pin num="9" name="-" type="input"/>
+        <pin num="10" name="+" type="input"/>
+        <pin num="11" name="V-" type="power_in"/>
+        <pin num="12" name="+" type="input"/>
+        <pin num="13" name="-" type="input"/>
+        <pin num="14" name="" type="output"/>
+      </pins>
+    </libpart>
+    <libpart lib="FDSRevE" part="R">
+      <description>Resistor</description>
+      <footprints>
+        <fp>R1</fp>
+        <fp>R10</fp>
+        <fp>R11</fp>
+        <fp>R12</fp>
+        <fp>R2</fp>
+        <fp>R3</fp>
+        <fp>R4</fp>
+        <fp>R5</fp>
+        <fp>R6</fp>
+        <fp>R7</fp>
+        <fp>R8</fp>
+        <fp>R9</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">R</field>
+        <field name="Value">R</field>
+        <field name="Footprint"/>
+        <field name="Datasheet"/>
+        <field name="Description">Resistor</field>
+      </fields>
+      <pins>
+        <pin num="1" name="" type="passive"/>
+        <pin num="2" name="" type="passive"/>
+      </pins>
+    </libpart>
+  </libparts>
+  <libraries>
+    <library logical="FDSRevE">
+      <uri>${KIPRJMOD}/FDSRevE.kicad_sym</uri>
+    </library>
+  </libraries>
+  <nets>
+    <net code="1" name="/AC_SOURCE" class="Default">
+      <node ref="C5" pin="1" pintype="passive"/>
+      <node ref="R4" pin="2" pintype="passive"/>
+    </net>
+    <net code="2" name="/ADC_OUT" class="Default">
+      <node ref="C8" pin="1" pintype="passive"/>
+      <node ref="D1" pin="2" pinfunction="A_2" pintype="passive"/>
+      <node ref="D2" pin="1" pinfunction="K_1" pintype="passive"/>
+      <node ref="J2" pin="3" pinfunction="Pin_3_3" pintype="passive"/>
+      <node ref="R11" pin="2" pintype="passive"/>
+    </net>
+    <net code="3" name="/CSA_RAW" class="Default">
+      <node ref="C4" pin="1" pintype="passive"/>
+      <node ref="J3" pin="4" pinfunction="Pin_4_4" pintype="passive"/>
+      <node ref="R3" pin="1" pintype="passive"/>
+      <node ref="R4" pin="1" pintype="passive"/>
+      <node ref="U1" pin="1" pintype="output"/>
+    </net>
+    <net code="4" name="/GAIN_DIV" class="Default">
+      <node ref="J4" pin="1" pinfunction="Pin_1_1" pintype="passive"/>
+      <node ref="R7" pin="2" pintype="passive"/>
+      <node ref="R8" pin="1" pintype="passive"/>
+    </net>
+    <net code="5" name="/GAIN_FB" class="Default">
+      <node ref="C6" pin="2" pintype="passive"/>
+      <node ref="R6" pin="2" pintype="passive"/>
+      <node ref="R7" pin="1" pintype="passive"/>
+      <node ref="U1" pin="9" pinfunction="-_9" pintype="input"/>
+    </net>
+    <net code="6" name="/GAIN_IN" class="Default">
+      <node ref="C5" pin="2" pintype="passive"/>
+      <node ref="R5" pin="1" pintype="passive"/>
+      <node ref="U1" pin="10" pinfunction="+_10" pintype="input"/>
+    </net>
+    <net code="7" name="/GAIN_RAW" class="Default">
+      <node ref="C6" pin="1" pintype="passive"/>
+      <node ref="J3" pin="5" pinfunction="Pin_5_5" pintype="passive"/>
+      <node ref="R6" pin="1" pintype="passive"/>
+      <node ref="R9" pin="1" pintype="passive"/>
+      <node ref="U1" pin="8" pintype="output"/>
+    </net>
+    <net code="8" name="/GND" class="Default">
+      <node ref="C1" pin="2" pintype="passive"/>
+      <node ref="C2" pin="2" pintype="passive"/>
+      <node ref="C3" pin="2" pintype="passive"/>
+      <node ref="C8" pin="2" pintype="passive"/>
+      <node ref="D2" pin="2" pinfunction="A_2" pintype="passive"/>
+      <node ref="J2" pin="1" pinfunction="Pin_1_1" pintype="passive"/>
+      <node ref="J3" pin="1" pinfunction="Pin_1_1" pintype="passive"/>
+      <node ref="R2" pin="2" pintype="passive"/>
+      <node ref="U1" pin="11" pinfunction="V-_11" pintype="power_in"/>
+    </net>
+    <net code="9" name="/GUARD" class="Default">
+      <node ref="R12" pin="2" pintype="passive"/>
+    </net>
+    <net code="10" name="/PICO_3V3" class="Default">
+      <node ref="C1" pin="1" pintype="passive"/>
+      <node ref="C2" pin="1" pintype="passive"/>
+      <node ref="D1" pin="1" pinfunction="K_1" pintype="passive"/>
+      <node ref="J2" pin="2" pinfunction="Pin_2_2" pintype="passive"/>
+      <node ref="J3" pin="2" pinfunction="Pin_2_2" pintype="passive"/>
+      <node ref="R1" pin="1" pintype="passive"/>
+      <node ref="U1" pin="4" pinfunction="V+_4" pintype="power_in"/>
+    </net>
+    <net code="11" name="/REF_DIV" class="Default">
+      <node ref="C3" pin="1" pintype="passive"/>
+      <node ref="R1" pin="2" pintype="passive"/>
+      <node ref="R2" pin="1" pintype="passive"/>
+      <node ref="U1" pin="5" pinfunction="+_5" pintype="input"/>
+    </net>
+    <net code="12" name="/SHAPED_RAW" class="Default">
+      <node ref="C7" pin="1" pintype="passive"/>
+      <node ref="J3" pin="6" pinfunction="Pin_6_6" pintype="passive"/>
+      <node ref="R10" pin="1" pintype="passive"/>
+      <node ref="R11" pin="1" pintype="passive"/>
+      <node ref="U1" pin="14" pintype="output"/>
+    </net>
+    <net code="13" name="/SHAPE_FB" class="Default">
+      <node ref="C7" pin="2" pintype="passive"/>
+      <node ref="R10" pin="2" pintype="passive"/>
+      <node ref="R9" pin="2" pintype="passive"/>
+      <node ref="U1" pin="13" pinfunction="-_13" pintype="input"/>
+    </net>
+    <net code="14" name="/SUM" class="Default">
+      <node ref="C4" pin="2" pintype="passive"/>
+      <node ref="J1" pin="2" pinfunction="Pin_2_2" pintype="passive"/>
+      <node ref="R3" pin="2" pintype="passive"/>
+      <node ref="U1" pin="2" pinfunction="-_2" pintype="input"/>
+    </net>
+    <net code="15" name="/VMID" class="Default">
+      <node ref="J1" pin="1" pinfunction="Pin_1_1" pintype="passive"/>
+      <node ref="J3" pin="3" pinfunction="Pin_3_3" pintype="passive"/>
+      <node ref="J4" pin="2" pinfunction="Pin_2_2" pintype="passive"/>
+      <node ref="R12" pin="1" pintype="passive"/>
+      <node ref="R5" pin="2" pintype="passive"/>
+      <node ref="R8" pin="2" pintype="passive"/>
+      <node ref="U1" pin="12" pinfunction="+_12" pintype="input"/>
+      <node ref="U1" pin="3" pinfunction="+_3" pintype="input"/>
+      <node ref="U1" pin="6" pinfunction="-_6" pintype="input"/>
+      <node ref="U1" pin="7" pintype="output"/>
+    </net>
+  </nets>
+</export>

@@ -1,0 +1,25 @@
+# Source targets and validation scope
+
+This final Rev E.1 source package supports Pico, Pico W, Pico 2, Pico 2 W, classic 16 MHz ATmega328P Uno R3 and Nano in source. **All six target builds and all hardware tests remain NOT RUN.** No installed CMake, Ninja, ARM compiler, AVR compiler, Arduino CLI or configured Pico SDK was found. No SDK, core or compiler was installed/downloaded, and no hardware was programmed or tested in this verification.
+
+| Host | J2.1 GND | J2.2 3V3 | J2.3 ADC_OUT | Source mode |
+|---|---|---|---|---|
+| Pico / Pico W | physical 33 AGND | physical 36 3V3 OUT | physical 31 GP26/ADC0 | 12-bit nominal, 100 ksps DMA |
+| Pico 2 / Pico 2 W | physical 33 AGND | physical 36 3V3 OUT | physical 31 GP26/ADC0 | 12-bit nominal, 100 ksps DMA |
+| Classic Uno R3 / Nano | GND | verified 3.3 V output | A0 | 10-bit nominal, approximately 9.615 ksps, DEFAULT AVcc |
+
+The daughterboard remains **3.3 V only** with every host. Never connect 5 V/VIN, Pico VBUS/VSYS, AREF or an Arduino output to it. Leave AREF unwired. Connect one host at a time with power off; change the physical gain jumper with power off. Nano clone power trees vary; verify the 3.3 V source under load. Unpowered-host behavior and hotplug are not qualified. The original three-wire interface and component basket are unchanged.
+
+Pico uses the shared RP2040/RP2350 ADC/DMA APIs and the existing four-board CMake allowlist. It does not initialize a radio or link a CYW43/network library, and it does not drive GPIO23. Optional GP15 fixture mode stays disabled by default. AVR source guards admit only Uno/Nano ATmega328P at 16 MHz; it has no fixture output. Both perform CPU analysis and serial printing after capture; USB/timer/serial interrupts are not proven electrically quiet or timing-neutral.
+
+The revised Pico estimator uses a 24-code/6-sigma threshold floor, 100 ms exclusion, 100 ms end guard, a contiguous four-sample width gate and a 512-sample local median with 1-code offset/slope limits. The AVR automatic threshold is max(4 codes, 6 initial sigma), distinct from the Pico 24-code floor; frozen calibration must still meet the current noise check. The AVR estimator accepts at most one candidate with threshold crossing in samples 64–127 and a complete positive lobe before its end guard. Ordinary negative tail no longer changes AVR acceptance solely because it remains at the record end. Both report local pedestal values/tolerances and reject unresolved local recovery or drift. AVR polling now has bounded per-conversion warmup/capture timeouts and clean abort.
+
+The long Pico exclusion and restricted AVR trigger window deliberately reduce usable opportunity. Per-record sample windows are not radiation exposure or an unbiased rate denominator. Candidate amplitudes are diagnostic when the record/acquisition is rejected. Even qualified candidates do not establish absolute amplitude, single-particle energy or V5 precision; unresolved close overlap, coincident disturbance and hidden upstream saturation remain limitations. See [README.txt](README.txt) for operational limits and commands.
+
+Pico native capture/workspace/result state is **72,384 bytes**, below the existing 80 KiB application limit. AVR native sample/result state plus 64-byte reserve is **636 bytes**, below 800 bytes. These measurements are native ABI checks, not ARM/AVR link maps or stack analysis. Actual SDK/core/static buffers and stack remain target-build gates.
+
+The reproducible native tests use the full ideal nominal schematic cascade, amplitude/separation/phase sweeps, pre-record pulses, local drift, sparse spikes and timeout control flow. Native syntax checks use explicit declaration/API/register stubs for each family/Uno/Nano guard. They check C/C++ syntax and printf formats only; they do not validate real SDK/core APIs, ADC register semantics, timing, noise, stability or radiation response. Current measured counts and numerical bounds are in [the evidence report](../README.md).
+
+Preserved reference links: [Pico SDK board selection](https://www.raspberrypi.com/documentation/microcontrollers/c_sdk.html), [official Uno pinout](https://content.arduino.cc/assets/Pinout-UNOrev3_latest.pdf), [classic Nano datasheet](https://docs.arduino.cc/resources/datasheets/A000005-datasheet.pdf), [ATmega328P datasheet](https://ww1.microchip.com/downloads/en/devicedoc/atmel-7810-automotive-microcontrollers-atmega328p_datasheet.pdf). These links are carried forward from the source package; this change does not claim a new hardware qualification from them.
+
+Arduino build examples and IDE board/processor selections are in [README.txt](README.txt). They are compile instructions only and were **NOT RUN**. Primary references: [Arduino CLI compile options](https://arduino.github.io/arduino-cli/1.5/commands/arduino-cli_compile/), [CLI cache configuration](https://arduino.github.io/arduino-cli/1.5/configuration/) and [official AVR board definitions](https://github.com/arduino/ArduinoCore-avr/blob/master/boards.txt).

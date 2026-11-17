@@ -1,0 +1,1 @@
+(fp_lib_table (version 7) (lib (name "FDSRevE") (type "KiCad") (uri "${KIPRJMOD}/FDSRevE.pretty") (options "") (descr "Rev E top-side THT exact lead-pitch footprints")))

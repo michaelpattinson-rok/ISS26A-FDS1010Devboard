@@ -1,0 +1,65 @@
+{
+  "F.Cu": {
+    "native_segments": 274,
+    "exported_segments": 274,
+    "exact_match": true,
+    "sha256": "136147200903efb8e8ec0ec973c048a1497191ef34510ae876826cf95410cdb1"
+  },
+  "B.Cu": {
+    "native_segments": 135,
+    "exported_segments": 135,
+    "exact_match": true,
+    "sha256": "2bd3ed267b31386c49d6b0d7664337c32d4a57c13a53aceae2183cfb1db8f3d7"
+  },
+  "PTH": {
+    "native_holes": 77,
+    "exported_holes": 77,
+    "exact_match_at_1um_coordinate_resolution": true,
+    "sha256": "a7d8050bcb98e59ba115aa06d5a56ccbeb9558b4c4cdb393d14ebbec332b6c5c"
+  },
+  "NPTH": {
+    "native_holes": 4,
+    "exported_holes": 4,
+    "exact_match_at_1um_coordinate_resolution": true,
+    "sha256": "55f3ebadcb6974db3f00ad0102026df29c7a3f7c03ac566100fa4532d0794318"
+  },
+  "mask.gts": {
+    "native_opened_component_pads": 75,
+    "exported_flashes": 75,
+    "exact_pad_center_match": true
+  },
+  "mask.gbs": {
+    "native_opened_component_pads": 75,
+    "exported_flashes": 75,
+    "exact_pad_center_match": true
+  },
+  ".gts": {
+    "bytes": 3212,
+    "sha256": "97dd69148de7b587790fb0bfc425b4e4b63a9d2c67866cd601cfe91a10686bba",
+    "file_function": "Soldermask,Top"
+  },
+  ".gbs": {
+    "bytes": 3212,
+    "sha256": "f6f82015510260deca29ad760a5ae492831ee4b9a84cdccd2091f4bd7b78bd65",
+    "file_function": "Soldermask,Bot"
+  },
+  ".gto": {
+    "bytes": 253964,
+    "sha256": "a9ad0908b46bd2d7650b4a98347446b9c41b1cf1461a35df4365237e2631d894",
+    "file_function": "Legend,Top"
+  },
+  ".gbo": {
+    "bytes": 166829,
+    "sha256": "7013947f891b571ae3ddcc05c861a6614db5aab084162e4f4d88870f492144fb",
+    "file_function": "Legend,Bot"
+  },
+  ".gm1": {
+    "bytes": 908,
+    "sha256": "25ceae3d67dba6788aa3c880fc736ab839bfb61e24c0fae7e9a3d442cfd85c85",
+    "file_function": "Profile,NP"
+  },
+  "board_sha256": "476a820d24cebeb5c989c23914bb36b7a33c3ef33f8af7b150a6480a66ef3d73",
+  "failures": [],
+  "status": "PASS",
+  "scope": "All native straight copper track segments/width/net/layer and all round drill hits read back exactly. X2 layer identities checked; not a supplier DFM check or independent full aperture/zone polygon rendering."
+}

@@ -1,0 +1,20 @@
+{
+  "accounted" : "150000640",
+  "board" : "UNO R4 Minima",
+  "cadence" : "250000.0",
+  "firmware" : "1.0",
+  "firmwareQueuePeak" : "1",
+  "gpioReleased" : "nil",
+  "hostQueuePeak" : "4",
+  "indexed" : "150000640",
+  "knownLoss" : "0",
+  "qualityADCError" : "0",
+  "qualityRails" : "0",
+  "report" : "Stop reconciled",
+  "requested" : "250000",
+  "saved" : "150000640",
+  "status" : "complete",
+  "stopCode" : "0",
+  "unknown" : "false",
+  "writerMaxUS" : "9906"
+}

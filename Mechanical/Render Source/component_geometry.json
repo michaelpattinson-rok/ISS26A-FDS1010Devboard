@@ -1,0 +1,526 @@
+{
+  "schema_version": 1,
+  "unit": "mm",
+  "scope": "Documentation body models only. Native PCB and Circuit.json remain unchanged.",
+  "sources": {
+    "yageo": {
+      "url": "https://yageogroup.com/content/datasheet/asset/file/YAGEO-MFR_DATASHEET",
+      "page": 3,
+      "description": "Yageo MFR V4, April2024, MFR25 dimensions"
+    },
+    "stackpole": {
+      "url": "https://www.seielect.com/catalog/sei-rnf_rnmf.pdf",
+      "page": 1,
+      "description": "Stackpole RNF/RNMF mechanical specifications, RNF14"
+    },
+    "murata": {
+      "url": "https://www.murata.com/~/media/webrenewal/products/resistor/highvoltage/mhr0317sa_series_data_sheet.ashx?la=en-us",
+      "page": 3,
+      "description": "Murata MHR0317SA January2025, dimensions and marking"
+    },
+    "tdk_fg": {
+      "url": "https://product.tdk.cn/system/files/dam/doc/product/capacitor/ceramic/lead-mlcc/specification/leadmlccspec_halogenfree_fg_en.pdf",
+      "page": 3,
+      "description": "TDK GC14080009 September2025. L measured1mm below body top; lead gap measured below kink."
+    },
+    "tdk_fa": {
+      "url": "https://product.tdk.com/en/search/capacitor/ceramic/lead-mlcc/info?part_no=FA18C0G2A102JNU00",
+      "page": null,
+      "description": "TDK exact FA18 part dimensions"
+    },
+    "kemet": {
+      "url": "https://content.kemet.com/datasheets/KEM_C1049_GOLDMAX_C0G.pdf",
+      "page": 3,
+      "description": "KEMET C1049 Goldmax C0G August2025, C317 and shoulder bend dimensions"
+    },
+    "vishay": {
+      "url": "https://www.vishay.com/docs/85513/bat85s.pdf",
+      "page": 2,
+      "description": "Vishay85513 Rev2.2 November2024, DO35 dimensions"
+    },
+    "microchip": {
+      "url": "https://ww1.microchip.com/downloads/aemDocuments/documents/MSLD/ProductDocuments/DataSheets/MCP6021-Data-Sheet-DS20001685.pdf",
+      "page": 41,
+      "description": "Microchip DS20001685F, C04-005B14 lead PDIP dimensions; marking at page26"
+    },
+    "harwin2": {
+      "url": "https://www.harwin.com/products/M20-9990245",
+      "page": null,
+      "description": "Harwin exact2contact header dimensions"
+    },
+    "harwin3": {
+      "url": "https://www.harwin.com/products/M20-9990345",
+      "page": null,
+      "description": "Harwin exact3contact header dimensions"
+    },
+    "harwin6": {
+      "url": "https://www.harwin.com/products/M20-9990645",
+      "page": null,
+      "description": "Harwin exact6contact header dimensions"
+    }
+  },
+  "families": {
+    "yageo_mfr25": {
+      "shape": "axial",
+      "body_dimensions_mm": [
+        6.3,
+        2.4,
+        2.4
+      ],
+      "dimension_basis": "Published nominal body and wire diameter",
+      "body_bottom_z_mm": 0.35,
+      "lead_section_mm": [
+        0.55
+      ],
+      "lead_tip_z_mm": -2.4,
+      "source": "yageo",
+      "source_limits": {
+        "length": [
+          5.8,
+          6.3,
+          6.8
+        ],
+        "diameter": [
+          2.2,
+          2.4,
+          2.6
+        ],
+        "wire_diameter": [
+          0.5,
+          0.55,
+          0.6
+        ]
+      },
+      "illustrative_assumptions": [
+        "Body clearance0.35mm is an assembly illustration assumption.",
+        "Formed lead bends are illustrative.",
+        "The installed trimmed wire tail extends0.8mm below the1.6mm PCB."
+      ]
+    },
+    "stackpole_rnf14": {
+      "shape": "axial",
+      "body_dimensions_mm": [
+        6.35,
+        2.35,
+        2.35
+      ],
+      "dimension_basis": "Published nominal body and wire diameter",
+      "body_bottom_z_mm": 0.35,
+      "lead_section_mm": [
+        0.56
+      ],
+      "lead_tip_z_mm": -2.4,
+      "source": "stackpole",
+      "source_limits": {
+        "length": [
+          5.7,
+          6.35,
+          7.0
+        ],
+        "diameter": [
+          2.1,
+          2.35,
+          2.6
+        ],
+        "wire_diameter": [
+          0.48,
+          0.56,
+          0.64
+        ]
+      },
+      "illustrative_assumptions": [
+        "Body clearance0.35mm is an assembly illustration assumption.",
+        "Formed lead bends are illustrative.",
+        "The installed trimmed wire tail extends0.8mm below the1.6mm PCB."
+      ]
+    },
+    "murata_mhr0317": {
+      "shape": "radial_resistor",
+      "body_dimensions_mm": [
+        17.6,
+        2.5,
+        5.0
+      ],
+      "dimension_basis": "Maximum body dimensions and reference flat terminal section",
+      "body_bottom_z_mm": 0.2,
+      "lead_section_mm": [
+        0.5,
+        0.25
+      ],
+      "lead_tip_z_mm": -3.3,
+      "source": "murata",
+      "source_limits": {
+        "body_max": [
+          17.6,
+          2.5,
+          5.0
+        ],
+        "lead_pitch": [
+          14.94,
+          15.24,
+          15.54
+        ],
+        "terminal_length": [
+          3.0,
+          3.5,
+          4.0
+        ]
+      },
+      "illustrative_assumptions": [
+        "Body clearance0.2mm is illustrative.",
+        "Terminals extend3.5mm from the modeled body lower edge.",
+        "Maximum body is shown for recognition; delivered coating contours and dimensions vary."
+      ]
+    },
+    "tdk_fg28": {
+      "shape": "coated_radial",
+      "body_dimensions_mm": [
+        4.0,
+        2.5,
+        4.1
+      ],
+      "dimension_basis": "Published maximum upper body length and thickness; selected body height within5.5mm package height",
+      "body_bottom_z_mm": 1.4,
+      "lead_section_mm": [
+        0.5
+      ],
+      "lead_tip_z_mm": -2.4,
+      "source": "tdk_fg",
+      "source_limits": {
+        "upper_length_max": 4.0,
+        "thickness_max": 2.5,
+        "package_height_max": 5.5,
+        "wire_diameter": [
+          0.47,
+          0.5,
+          0.6
+        ]
+      },
+      "illustrative_assumptions": [
+        "Seating reference is the board top.",
+        "Lower body edge1.4mm, rounded coating profile and shoulder bend contours are illustrative.",
+        "The compact upper body meets the published L dimension1mm below its top; lower coating may widen near leads.",
+        "Formed lead bends are illustrative.",
+        "The installed trimmed wire tail extends0.8mm below the1.6mm PCB."
+      ]
+    },
+    "tdk_fg18": {
+      "shape": "coated_radial",
+      "body_dimensions_mm": [
+        4.0,
+        2.5,
+        4.1
+      ],
+      "dimension_basis": "Published maximum upper body length and thickness; selected body height within5.5mm package height",
+      "body_bottom_z_mm": 1.4,
+      "lead_section_mm": [
+        0.5
+      ],
+      "lead_tip_z_mm": -2.4,
+      "source": "tdk_fg",
+      "source_limits": {
+        "upper_length_max": 4.0,
+        "thickness_max": 2.5,
+        "package_height_max": 5.5,
+        "wire_diameter": [
+          0.47,
+          0.5,
+          0.6
+        ]
+      },
+      "illustrative_assumptions": [
+        "Seating reference is the board top.",
+        "Lower body edge1.4mm, rounded coating profile and shoulder bend contours are illustrative.",
+        "The compact upper body meets the published L dimension1mm below its top; lower coating may widen near leads.",
+        "Formed lead bends are illustrative.",
+        "The installed trimmed wire tail extends0.8mm below the1.6mm PCB."
+      ]
+    },
+    "tdk_fg24": {
+      "shape": "coated_radial",
+      "body_dimensions_mm": [
+        4.5,
+        3.0,
+        4.1
+      ],
+      "dimension_basis": "Published maximum upper body length and thickness; selected body height within5.5mm package height",
+      "body_bottom_z_mm": 1.4,
+      "lead_section_mm": [
+        0.5
+      ],
+      "lead_tip_z_mm": -2.4,
+      "source": "tdk_fg",
+      "source_limits": {
+        "upper_length_max": 4.5,
+        "thickness_max": 3.0,
+        "package_height_max": 5.5,
+        "wire_diameter": [
+          0.47,
+          0.5,
+          0.6
+        ]
+      },
+      "illustrative_assumptions": [
+        "Seating reference is the board top.",
+        "Lower body edge1.4mm, rounded coating profile and shoulder bend contours are illustrative.",
+        "The compact upper body meets the published L dimension1mm below its top; lower coating may widen near leads.",
+        "Formed lead bends are illustrative.",
+        "The installed trimmed wire tail extends0.8mm below the1.6mm PCB."
+      ]
+    },
+    "tdk_fa18": {
+      "shape": "coated_radial",
+      "body_dimensions_mm": [
+        4.0,
+        2.5,
+        4.1
+      ],
+      "dimension_basis": "Published maximum upper body length and thickness; selected body height within5.5mm package height",
+      "body_bottom_z_mm": 1.4,
+      "lead_section_mm": [
+        0.5
+      ],
+      "lead_tip_z_mm": -2.4,
+      "source": "tdk_fa",
+      "source_limits": {
+        "upper_length_max": 4.0,
+        "thickness_max": 2.5,
+        "package_height_max": 5.5,
+        "wire_diameter": [
+          0.47,
+          0.5,
+          0.6
+        ]
+      },
+      "illustrative_assumptions": [
+        "Seating reference is the board top.",
+        "Lower body edge1.4mm, rounded coating profile and shoulder bend contours are illustrative.",
+        "The compact upper body meets the published L dimension1mm below its top; lower coating may widen near leads.",
+        "Formed lead bends are illustrative.",
+        "The installed trimmed wire tail extends0.8mm below the1.6mm PCB."
+      ]
+    },
+    "kemet_c317": {
+      "shape": "coated_radial",
+      "body_dimensions_mm": [
+        3.81,
+        2.54,
+        3.88
+      ],
+      "dimension_basis": "Published maximum upper body length/thickness and5.08mm seated height",
+      "body_bottom_z_mm": 1.2,
+      "lead_section_mm": [
+        0.51
+      ],
+      "lead_tip_z_mm": -2.4,
+      "source": "kemet",
+      "source_limits": {
+        "length_max": 3.81,
+        "thickness_max": 2.54,
+        "package_height_max": 5.08,
+        "wire_diameter": [
+          0.485,
+          0.51,
+          0.61
+        ]
+      },
+      "illustrative_assumptions": [
+        "Seating reference is the board top.",
+        "Lower body edge1.2mm, rounded coating profile and formed shoulders are illustrative.",
+        "Formed lead bends are illustrative.",
+        "The installed trimmed wire tail extends0.8mm below the1.6mm PCB."
+      ]
+    },
+    "vishay_bat85": {
+      "shape": "diode",
+      "body_dimensions_mm": [
+        3.9,
+        1.7,
+        1.7
+      ],
+      "dimension_basis": "Published maximum body dimensions, selected midrange wire diameter",
+      "body_bottom_z_mm": 0.35,
+      "lead_section_mm": [
+        0.5
+      ],
+      "lead_tip_z_mm": -2.4,
+      "source": "vishay",
+      "source_limits": {
+        "length_min": 3.1,
+        "length_max": 3.9,
+        "diameter_min": 1.3,
+        "diameter_max": 1.7,
+        "wire_diameter_min": 0.4,
+        "wire_diameter_max": 0.6
+      },
+      "illustrative_assumptions": [
+        "Body clearance0.35mm, band spacing and glass color are illustrative.",
+        "Formed lead bends are illustrative.",
+        "The installed trimmed wire tail extends0.8mm below the1.6mm PCB."
+      ]
+    },
+    "microchip_pdip14": {
+      "shape": "pdip",
+      "body_dimensions_mm": [
+        19.05,
+        6.35,
+        3.302
+      ],
+      "dimension_basis": "Nominal D/E1/A2/L/lead sections; published minimum A1 selected",
+      "body_bottom_z_mm": 0.381,
+      "lead_section_mm": [
+        0.4572,
+        0.254
+      ],
+      "lead_tip_z_mm": -3.302,
+      "source": "microchip",
+      "source_limits": {
+        "length": [
+          18.669,
+          19.05,
+          19.685
+        ],
+        "width": [
+          6.096,
+          6.35,
+          7.112
+        ],
+        "thickness": [
+          2.921,
+          3.302,
+          4.953
+        ],
+        "body_standoff_min": 0.381,
+        "overall_height_max": 5.334,
+        "tip_to_seating_plane": [
+          2.921,
+          3.302,
+          3.81
+        ],
+        "upper_lead_width_nom": 1.524,
+        "lower_lead_width_nom": 0.4572,
+        "lead_thickness_nom": 0.254,
+        "shoulder_width_nom": 7.874
+      },
+      "illustrative_assumptions": [
+        "Seating plane equals board top.",
+        "Minimum A1 and nominal A2 are selected to give overall height3.683mm.",
+        "Undimensioned lead bends, notch radius and pin1 dot style are illustrative.",
+        "Marking text follows the photographed lot direction; actual printing may differ."
+      ]
+    },
+    "harwin2": {
+      "shape": "header",
+      "body_dimensions_mm": [
+        5.08,
+        2.54,
+        2.54
+      ],
+      "dimension_basis": "Published housing/pitch/post/tail/mating dimensions",
+      "body_bottom_z_mm": 0,
+      "lead_section_mm": [
+        0.64,
+        0.64
+      ],
+      "lead_tip_z_mm": -3.0,
+      "source": "harwin2",
+      "source_limits": {
+        "pitch": 2.54,
+        "housing_height": 2.54,
+        "tail_length": 3.0,
+        "mating_length": 6.1,
+        "above_pcb_height": 8.64,
+        "post_width": 0.64
+      },
+      "illustrative_assumptions": [
+        "Housing seats on board top.",
+        "Small edge chamfers and plastic segmentation are illustrative."
+      ]
+    },
+    "harwin3": {
+      "shape": "header",
+      "body_dimensions_mm": [
+        7.62,
+        2.54,
+        2.54
+      ],
+      "dimension_basis": "Published housing/pitch/post/tail/mating dimensions",
+      "body_bottom_z_mm": 0,
+      "lead_section_mm": [
+        0.64,
+        0.64
+      ],
+      "lead_tip_z_mm": -3.0,
+      "source": "harwin3",
+      "source_limits": {
+        "pitch": 2.54,
+        "housing_height": 2.54,
+        "tail_length": 3.0,
+        "mating_length": 6.1,
+        "above_pcb_height": 8.64,
+        "post_width": 0.64
+      },
+      "illustrative_assumptions": [
+        "Housing seats on board top.",
+        "Small edge chamfers and plastic segmentation are illustrative."
+      ]
+    },
+    "harwin6": {
+      "shape": "header",
+      "body_dimensions_mm": [
+        15.24,
+        2.54,
+        2.54
+      ],
+      "dimension_basis": "Published housing/pitch/post/tail/mating dimensions",
+      "body_bottom_z_mm": 0,
+      "lead_section_mm": [
+        0.64,
+        0.64
+      ],
+      "lead_tip_z_mm": -3.0,
+      "source": "harwin6",
+      "source_limits": {
+        "pitch": 2.54,
+        "housing_height": 2.54,
+        "tail_length": 3.0,
+        "mating_length": 6.1,
+        "above_pcb_height": 8.64,
+        "post_width": 0.64
+      },
+      "illustrative_assumptions": [
+        "Housing seats on board top.",
+        "Small edge chamfers and plastic segmentation are illustrative."
+      ]
+    }
+  },
+  "ref_family": {
+    "R1": "yageo_mfr25",
+    "R2": "yageo_mfr25",
+    "R4": "yageo_mfr25",
+    "R5": "yageo_mfr25",
+    "R6": "yageo_mfr25",
+    "R9": "yageo_mfr25",
+    "R10": "yageo_mfr25",
+    "R7": "stackpole_rnf14",
+    "R8": "stackpole_rnf14",
+    "R11": "stackpole_rnf14",
+    "R12": "stackpole_rnf14",
+    "R3": "murata_mhr0317",
+    "C1": "tdk_fg28",
+    "C3": "tdk_fg28",
+    "C6": "tdk_fg28",
+    "C2": "tdk_fg18",
+    "C5": "tdk_fg24",
+    "C7": "tdk_fg24",
+    "C8": "tdk_fa18",
+    "C4": "kemet_c317",
+    "D1": "vishay_bat85",
+    "D2": "vishay_bat85",
+    "U1": "microchip_pdip14",
+    "J1": "harwin2",
+    "J4": "harwin2",
+    "J2": "harwin3",
+    "J3": "harwin6"
+  }
+}

@@ -1,0 +1,2 @@
+8984e64cf4a7e63feebb27c31522367229aaa27e015ed0bea156cf0fd8f9d65d  Signal Bench UNO R4 Minima 1.0.bin
+6f0ace4927c9e70dc0f01eaa844bd48394325fc9ea2e580fe78ad4aa4bbb8108  Signal Bench Pico W 1.10.uf2

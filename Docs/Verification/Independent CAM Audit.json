@@ -1,0 +1,159 @@
+{
+  "status": "PASS",
+  "errors": [],
+  "board_sha256": "476a820d24cebeb5c989c23914bb36b7a33c3ef33f8af7b150a6480a66ef3d73",
+  "layers": {
+    "F": {
+      "gerber_sha256": "136147200903efb8e8ec0ec973c048a1497191ef34510ae876826cf95410cdb1",
+      "track_segments_native": 274,
+      "track_segments_CAM": 274,
+      "track_geometry_match": true,
+      "component_pad_flashes": 71,
+      "pad_mismatches": [],
+      "ground_zone_regions": 0,
+      "SUM_samples": 130,
+      "GND_covers_SUM_samples": 0
+    },
+    "B": {
+      "gerber_sha256": "2bd3ed267b31386c49d6b0d7664337c32d4a57c13a53aceae2183cfb1db8f3d7",
+      "track_segments_native": 135,
+      "track_segments_CAM": 135,
+      "track_geometry_match": true,
+      "component_pad_flashes": 71,
+      "pad_mismatches": [],
+      "ground_zone_regions": 1,
+      "SUM_samples": 130,
+      "GND_covers_SUM_samples": 0
+    }
+  },
+  "drills": {
+    "PTH": {
+      "expected_count": 77,
+      "CAM_count": 77,
+      "match": true,
+      "tools_mm": [
+        0.4,
+        0.9,
+        1.0,
+        1.1
+      ],
+      "sha256": "a7d8050bcb98e59ba115aa06d5a56ccbeb9558b4c4cdb393d14ebbec332b6c5c"
+    },
+    "NPTH": {
+      "expected_count": 4,
+      "CAM_count": 4,
+      "match": true,
+      "tools_mm": [
+        3.2
+      ],
+      "sha256": "55f3ebadcb6974db3f00ad0102026df29c7a3f7c03ac566100fa4532d0794318"
+    }
+  },
+  "masks": {
+    "F": {
+      "component_and_NPTH_openings": 75,
+      "all_expected_positions_match": true,
+      "aperture_shape_size_mismatches": [],
+      "vias_tented": true,
+      "sha256": "97dd69148de7b587790fb0bfc425b4e4b63a9d2c67866cd601cfe91a10686bba"
+    },
+    "B": {
+      "component_and_NPTH_openings": 75,
+      "all_expected_positions_match": true,
+      "aperture_shape_size_mismatches": [],
+      "vias_tented": true,
+      "sha256": "f6f82015510260deca29ad760a5ae492831ee4b9a84cdccd2091f4bd7b78bd65"
+    }
+  },
+  "outline": {
+    "segment_count": 8,
+    "arc_count": 4,
+    "closed_rounded_rectangle": true,
+    "bounds_mm": [
+      0.0,
+      0.0,
+      85.0,
+      60.0
+    ],
+    "sha256": "25ceae3d67dba6788aa3c880fc736ab839bfb61e24c0fae7e9a3d442cfd85c85"
+  },
+  "mounting_keepouts": [
+    {
+      "layer": "F",
+      "center_mm": [
+        4,
+        4
+      ],
+      "sampled_points": 240,
+      "GND_region_hits_inside3p5mm": 0
+    },
+    {
+      "layer": "F",
+      "center_mm": [
+        81,
+        4
+      ],
+      "sampled_points": 240,
+      "GND_region_hits_inside3p5mm": 0
+    },
+    {
+      "layer": "F",
+      "center_mm": [
+        4,
+        56
+      ],
+      "sampled_points": 240,
+      "GND_region_hits_inside3p5mm": 0
+    },
+    {
+      "layer": "F",
+      "center_mm": [
+        81,
+        56
+      ],
+      "sampled_points": 240,
+      "GND_region_hits_inside3p5mm": 0
+    },
+    {
+      "layer": "B",
+      "center_mm": [
+        4,
+        4
+      ],
+      "sampled_points": 240,
+      "GND_region_hits_inside3p5mm": 0
+    },
+    {
+      "layer": "B",
+      "center_mm": [
+        81,
+        4
+      ],
+      "sampled_points": 240,
+      "GND_region_hits_inside3p5mm": 0
+    },
+    {
+      "layer": "B",
+      "center_mm": [
+        4,
+        56
+      ],
+      "sampled_points": 240,
+      "GND_region_hits_inside3p5mm": 0
+    },
+    {
+      "layer": "B",
+      "center_mm": [
+        81,
+        56
+      ],
+      "sampled_points": 240,
+      "GND_region_hits_inside3p5mm": 0
+    }
+  ],
+  "limits": [
+    "No electrical radiation/source or bench verification.",
+    "GND SUM-void samples test actual CAM filled regions at0.2mm spacing; independent native DRC remains necessary for continuous geometry.",
+    "Copper tracks/pad flashes, drills, mask aperture positions/shapes/sizes and profile geometry compared here; silkscreen visual legibility remains separate."
+  ]
+}

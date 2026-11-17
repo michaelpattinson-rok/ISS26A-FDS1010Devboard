@@ -1,0 +1,176 @@
+{
+  "date": "2026-10-27",
+  "status": "Analytical prototype model; not measured or qualified",
+  "hardware_values_changed": false,
+  "component_count_preserved": 27,
+  "loop_combinations": 243,
+  "corrected_phase_margin_range_deg": [
+    89.27491029046811,
+    89.66842593969031
+  ],
+  "calibrated_phase_margin_range_deg": [
+    89.20820375597845,
+    89.65090709395415
+  ],
+  "nominal_loop_rows": [
+    {
+      "Cdet_nF": 0.4,
+      "Cpar_pF": 6.0,
+      "Rf_ohm": 100000000.0,
+      "Cf_pF": 10.0,
+      "GBW_scale_MHz": 10.0,
+      "NG_rise_start_Hz": 3.8258399781705617,
+      "NG_plateau_start_Hz": 159.15494309189535,
+      "NG_plateau": 41.6,
+      "extra_open_loop_pole_Hz": 21445069.205095585,
+      "crossover_corrected_Hz": 240369.56933524497,
+      "phase_margin_corrected_deg": 89.32079536585758,
+      "crossover_calibrated_65deg_Hz": 265214.8432821385,
+      "phase_margin_calibrated_65deg_deg": 89.25789283318319
+    },
+    {
+      "Cdet_nF": 1.0,
+      "Cpar_pF": 6.0,
+      "Rf_ohm": 100000000.0,
+      "Cf_pF": 10.0,
+      "GBW_scale_MHz": 10.0,
+      "NG_rise_start_Hz": 1.5664856603533006,
+      "NG_plateau_start_Hz": 159.15494309189535,
+      "NG_plateau": 101.60000000000001,
+      "extra_open_loop_pole_Hz": 21445069.205095585,
+      "crossover_corrected_Hz": 98424.2888979138,
+      "phase_margin_corrected_deg": 89.6453001734896,
+      "crossover_calibrated_65deg_Hz": 108598.91300811678,
+      "phase_margin_calibrated_65deg_deg": 89.62671161167232
+    },
+    {
+      "Cdet_nF": 5.0,
+      "Cpar_pF": 6.0,
+      "Rf_ohm": 100000000.0,
+      "Cf_pF": 10.0,
+      "GBW_scale_MHz": 10.0,
+      "NG_rise_start_Hz": 0.3172945436441295,
+      "NG_plateau_start_Hz": 159.15494309189535,
+      "NG_plateau": 501.6000000000001,
+      "extra_open_loop_pole_Hz": 21445069.205095585,
+      "crossover_corrected_Hz": 19936.830762416048,
+      "phase_margin_corrected_deg": 89.49026546853591,
+      "crossover_calibrated_65deg_Hz": 21997.731593678545,
+      "phase_margin_calibrated_65deg_deg": 89.52752283879882
+    }
+  ],
+  "numerical_checks": {
+    "transfer_algebra_max_relative_error": 6.714539685386509e-16,
+    "full_two_pole_nominal": {
+      "gain": "HIGH",
+      "gain_DC": 53.3,
+      "Cdet_nF": 1.0,
+      "charge_fC": 22.0,
+      "collection_us": 0.0,
+      "CSA_RAW_min_V": 1.647819258242178,
+      "CSA_RAW_max_V": 1.65,
+      "CSA_RAW_max_abs_deviation_mV": 2.180741757821808,
+      "CSA_RAW_linear_0p1_to_3p2V_exceeded": false,
+      "GAIN_RAW_min_V": 1.5371774480009708,
+      "GAIN_RAW_max_V": 1.656918571173623,
+      "GAIN_RAW_max_abs_deviation_mV": 112.82255199902919,
+      "GAIN_RAW_linear_0p1_to_3p2V_exceeded": false,
+      "SHAPED_RAW_min_V": 1.616141815471576,
+      "SHAPED_RAW_max_V": 1.926822617895591,
+      "SHAPED_RAW_max_abs_deviation_mV": 276.8226178955911,
+      "SHAPED_RAW_linear_0p1_to_3p2V_exceeded": false,
+      "ADC_OUT_min_V": 1.616141817141862,
+      "ADC_OUT_max_V": 1.9268222854129773,
+      "ADC_OUT_max_abs_deviation_mV": 276.82228541297724,
+      "ADC_OUT_linear_0p1_to_3p2V_exceeded": false,
+      "ADC_peak_mV": 276.82228541297724,
+      "ADC_peak_us": 655.6400033670066,
+      "ADC_negative_tail_mV": -33.85818285813792
+    },
+    "dominant_pole_nominal": {
+      "gain": "HIGH",
+      "gain_DC": 53.3,
+      "Cdet_nF": 1.0,
+      "charge_fC": 22.0,
+      "collection_us": 0.0,
+      "CSA_RAW_min_V": 1.6478193470015141,
+      "CSA_RAW_max_V": 1.65,
+      "CSA_RAW_max_abs_deviation_mV": 2.180652998485869,
+      "CSA_RAW_linear_0p1_to_3p2V_exceeded": false,
+      "GAIN_RAW_min_V": 1.5371778622754795,
+      "GAIN_RAW_max_V": 1.6569185711938113,
+      "GAIN_RAW_max_abs_deviation_mV": 112.82213772452047,
+      "GAIN_RAW_linear_0p1_to_3p2V_exceeded": false,
+      "SHAPED_RAW_min_V": 1.6161418153842966,
+      "SHAPED_RAW_max_V": 1.9268226119656828,
+      "SHAPED_RAW_max_abs_deviation_mV": 276.82261196568294,
+      "SHAPED_RAW_linear_0p1_to_3p2V_exceeded": false,
+      "ADC_OUT_min_V": 1.6161418170545825,
+      "ADC_OUT_max_V": 1.926822279483071,
+      "ADC_OUT_max_abs_deviation_mV": 276.82227948307116,
+      "ADC_OUT_linear_0p1_to_3p2V_exceeded": false,
+      "ADC_peak_mV": 276.82227948307116,
+      "ADC_peak_us": 655.6400593757413,
+      "ADC_negative_tail_mV": -33.85818294541751
+    },
+    "legacy_ideal_nominal": {
+      "gain": "HIGH",
+      "gain_DC": 53.3,
+      "Cdet_nF": 1.0,
+      "charge_fC": 22.0,
+      "collection_us": 0.0,
+      "CSA_RAW_min_V": 1.6478,
+      "CSA_RAW_max_V": 1.6499999999999997,
+      "CSA_RAW_max_abs_deviation_mV": 2.2,
+      "CSA_RAW_linear_0p1_to_3p2V_exceeded": false,
+      "GAIN_RAW_min_V": 1.53274,
+      "GAIN_RAW_max_V": 1.6570295523192398,
+      "GAIN_RAW_max_abs_deviation_mV": 117.26,
+      "GAIN_RAW_linear_0p1_to_3p2V_exceeded": false,
+      "SHAPED_RAW_min_V": 1.6156038474120749,
+      "SHAPED_RAW_max_V": 1.929191044798669,
+      "SHAPED_RAW_max_abs_deviation_mV": 279.1910447986693,
+      "SHAPED_RAW_linear_0p1_to_3p2V_exceeded": false,
+      "ADC_OUT_min_V": 1.6156038491230513,
+      "ADC_OUT_max_V": 1.9291907094211898,
+      "ADC_OUT_max_abs_deviation_mV": 279.19070942118987,
+      "ADC_OUT_linear_0p1_to_3p2V_exceeded": false,
+      "ADC_peak_mV": 279.19070942118987,
+      "ADC_peak_us": 648.873546718572,
+      "ADC_negative_tail_mV": -34.39615087694857
+    },
+    "independent_recursive_peak_mV": 276.8213775806598,
+    "dominant_exact_vs_independent_recursive_percent": 0.00032580663358316997,
+    "independent_loop_phase_max_abs_error_deg": 0.0,
+    "independent_loop_crossover_max_relative_error": 1.1102230246251565e-16,
+    "independent_recursive_legacy_peak_mV": 279.220490699302,
+    "two_pole_vs_dominant_peak_percent": 2.1421346918515383e-06,
+    "full_vs_legacy_ideal_peak_percent": -0.8483176295954742
+  },
+  "tolerance_groups": {
+    "LOW": {
+      "corners": 64,
+      "nominal_peak_mV": 141.00797929885584,
+      "selected_corner_peak_range_mV": [
+        129.356002200374,
+        154.1078604760737
+      ],
+      "selected_corner_percent_from_nominal": [
+        -8.263345915897668,
+        9.290170132467225
+      ]
+    },
+    "HIGH": {
+      "corners": 64,
+      "nominal_peak_mV": 276.82228541297724,
+      "selected_corner_peak_range_mV": [
+        253.8548646468573,
+        302.6478843710567
+      ],
+      "selected_corner_percent_from_nominal": [
+        -8.296810616911133,
+        9.329306316343544
+      ]
+    }
+  }
+}

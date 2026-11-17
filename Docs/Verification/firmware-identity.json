@@ -1,0 +1,17 @@
+{
+  "pico_w": {
+    "firmware": "1.10",
+    "release_uf2_sha256": "6f0ace4927c9e70dc0f01eaa844bd48394325fc9ea2e580fe78ad4aa4bbb8108",
+    "rebuilt_bin_sha256": "ceadc9096064c98465e081af06f5c2efea225fa7863eade5c5fc41d2b2a1f8ce",
+    "image_bytes": 116572,
+    "build_date_release": "Nov 12 2026",
+    "build_date_rebuilt": "Nov 16 2026",
+    "content_equal_except_build_date_and_uf2_zero_padding": true
+  },
+  "uno_r4_minima": {
+    "firmware": "1.0",
+    "bin_sha256": "8984e64cf4a7e63feebb27c31522367229aaa27e015ed0bea156cf0fd8f9d65d",
+    "image_bytes": 68612,
+    "content_identical": true
+  }
+}

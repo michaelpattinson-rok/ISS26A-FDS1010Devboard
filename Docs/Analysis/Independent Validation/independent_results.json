@@ -1,0 +1,43 @@
+{
+  "model": "Linear nominal, dominant-pole opamp, no nonlinear/ADC/noise qualification",
+  "ideal_previous_assumptions": {
+    "cd_nF": 1.0,
+    "gain": 53.3,
+    "charge_fC": 22.0,
+    "collection_us": 0.0,
+    "ADC_peak_mV": 279.220490699302,
+    "peak_us": 648.75,
+    "negative_tail_mV": -34.40475132762572,
+    "CSA_peak_mV": 2.2,
+    "GAIN_peak_mV": 117.25706853664344,
+    "Pico_zero_phase_sampled_peak_mV": 279.21996277841515,
+    "AVR_zero_phase_sampled_peak_mV": 279.0103680827786
+  },
+  "full_nominal": {
+    "cd_nF": 1.0,
+    "gain": 53.3,
+    "charge_fC": 22.0,
+    "collection_us": 0.0,
+    "ADC_peak_mV": 276.8213775806598,
+    "peak_us": 655.75,
+    "negative_tail_mV": -33.85807389452449,
+    "CSA_peak_mV": 2.1806488820611283,
+    "GAIN_peak_mV": 112.82175852344852,
+    "Pico_zero_phase_sampled_peak_mV": 276.81511088266353,
+    "AVR_zero_phase_sampled_peak_mV": 276.4783503300538
+  },
+  "nominal_full_vs_ideal_peak_percent": -0.8592181442821922,
+  "uncalibrated_corners_mV": [
+    253.84175074311622,
+    302.6321503502844
+  ],
+  "uncalibrated_corners_percent_from_nominal": [
+    -8.301247193543727,
+    9.323981043372953
+  ],
+  "shaper_3dB_Hz": 318.94778174728526,
+  "Hz_to_rad_per_sec_model_bug": {
+    "documented_extra_pole_Hz": 21445069.205095585,
+    "implemented_extra_pole_Hz": 134743343.740906
+  }
+}

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="250" viewBox="0 0 660 250">
+<rect width="660" height="250" rx="16" fill="#edf3f9"/>
+<text x="26" y="42" font-family="Helvetica" font-size="25" font-weight="bold" fill="#22384e">Bare sensor optical check</text>
+<rect x="26" y="71" width="260" height="116" rx="12" fill="#ffffff"/>
+<rect x="397" y="71" width="236" height="116" rx="12" fill="#ffffff"/>
+<g font-family="Helvetica" font-size="23" fill="#22384e">
+<text x="45" y="103" font-weight="bold">FDS1010</text><text x="45" y="138">Anode</text><text x="45" y="170">Cathode</text>
+<text x="419" y="103" font-weight="bold">Pico W</text><text x="419" y="138">31 GP26</text><text x="419" y="170">33 AGND</text>
+<text x="26" y="224" fill="#8a4609" font-size="21">Proposed setup · verify polarity and voltage first</text></g>
+<path d="M286 131h111" stroke="#156ba1" stroke-width="4"/><path d="M286 163h111" stroke="#344d65" stroke-width="4"/>
+</svg>

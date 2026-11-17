@@ -1,0 +1,20 @@
+{
+  "accounted" : "1024",
+  "board" : "UNO R4 Minima",
+  "cadence" : "",
+  "firmware" : "1.0",
+  "firmwareQueuePeak" : "1",
+  "gpioReleased" : "nil",
+  "hostQueuePeak" : "1",
+  "indexed" : "1024",
+  "knownLoss" : "0",
+  "qualityADCError" : "0",
+  "qualityRails" : "0",
+  "report" : "UNO ADC transfer could not rearm in time. Tail coverage is unknown.",
+  "requested" : "500000",
+  "saved" : "1024",
+  "status" : "interrupted",
+  "stopCode" : "2",
+  "unknown" : "true",
+  "writerMaxUS" : "820"
+}

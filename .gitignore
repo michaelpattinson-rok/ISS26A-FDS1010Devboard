@@ -1,0 +1,13 @@
+.DS_Store
+.build/
+*.nosync/
+__pycache__/
+*.py[cod]
+*.kicad_prl
+*.kicad_pcb-bak
+*.kicad_sch-bak
+*.lck
+*-backups/
+xcuserdata/
+*.xcuserstate
+DerivedData/

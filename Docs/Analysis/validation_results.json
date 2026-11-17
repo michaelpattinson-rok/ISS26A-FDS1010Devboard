@@ -1,0 +1,39 @@
+{
+  "checks_passed": true,
+  "artifacts": {
+    "tia_loop_scan.csv": {
+      "rows": 243,
+      "sha256": "e3bcc746905b04f14690e2b889a27e1e3aac3cb546dbcb1ca83196ff6cb53bf8"
+    },
+    "finite_bandwidth_charge_pulses.csv": {
+      "rows": 42,
+      "sha256": "6feb55304377618309ed75c3509e7beb16c4c486cb1b6606f137cfb14a09f301"
+    },
+    "pulse_headroom.csv": {
+      "rows": 14,
+      "sha256": "df4cbc38293b599fb5bf211fc1374a208437110891bcc607698009eeb1cb8c4a"
+    },
+    "uncalibrated_tolerance_corners.csv": {
+      "rows": 128,
+      "sha256": "d70ba91ebe9529fa7d67c30c9d30fed3b9b1e717bbad99152ba8c6db979199ed"
+    },
+    "one_at_a_time_passive_sensitivity.csv": {
+      "rows": 52,
+      "sha256": "b09cd646a464fba3474cb18a10e20dde4a7679870658bd0a9f125c6062e94f5e"
+    },
+    "partial_noise.csv": {
+      "rows": 6,
+      "sha256": "dd983b811f68f7ba527c8af98b8e1f279e17f1214243600232831ae8dc32a7aa"
+    },
+    "static_offset_bounds.csv": {
+      "rows": 6,
+      "sha256": "d78ba2b4313753b6e39211d16d0e859e7ef0f21a3d58f3a24fc558e50fffca1e"
+    },
+    "nominal_22fC_HIGH_waveform_5us.csv": {
+      "rows": 6001,
+      "sha256": "a44acdf4fd24a1e64b1e7327dbd5b7de160f65b60eaf64d23824c449ac83765d"
+    }
+  },
+  "nominal_22_and_29p45fC_all_stages_within_selected_linear_window": true,
+  "independent_loop_and_pulse_crosschecks_passed": true
+}
