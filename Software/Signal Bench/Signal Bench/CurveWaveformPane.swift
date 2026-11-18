@@ -18,6 +18,7 @@ struct CurveWaveformPane: View {
     @State private var draftLower = 0.0
     @State private var draftUpper = 0.0
     @State private var height = WaveformHeight.standard
+    @State private var playback = RunPlayback()
 
     private var bounds: StreamSelection { reader.manifest.selection }
     private var rate: Double { reader.run.settings.recordedRate }
@@ -36,6 +37,9 @@ struct CurveWaveformPane: View {
                 change: { resize($0, center: center) }, home: home)
             if let plot {
                 chart(plot)
+                    .overlay { RunPlaybackMarker(playback: playback, range: plot.selection) }
+                RunPlaybackControls(playback: playback, range: plot.selection,
+                                    ready: !loading && plot.selection == selection && plot.count > 0 && !bench.busy)
             } else {
                 ContentUnavailableView(loading ? "Opening Curve" : "No Waveform in View", systemImage: "waveform")
                     .frame(height: 180)

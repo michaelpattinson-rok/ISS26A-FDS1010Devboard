@@ -13,7 +13,9 @@ case "$mode" in
   uno) suite="$tests/UnoChecks.swift"; flag=UNO_CHECKS ;;
   prerun) suite="$tests/PrerunChecks.swift"; flag=UNO_CHECKS ;;
   curve) suite=""; flag=CURVE_TESTING ;;
-  *) printf '%s\n' 'Use uno, prerun or curve.' >&2; exit 2 ;;
+  project-zip) suite="$tests/ProjectArchiveChecks.swift"; flag=UNO_CHECKS ;;
+  playback) suite="$tests/RunPlaybackChecks.swift"; flag=UNO_CHECKS ;;
+  *) printf '%s\n' 'Use uno, prerun, curve, project-zip or playback.' >&2; exit 2 ;;
 esac
 mkdir -p "$output/tmp"
 directory=$(mktemp -d "$output/run.XXXXXXXX")

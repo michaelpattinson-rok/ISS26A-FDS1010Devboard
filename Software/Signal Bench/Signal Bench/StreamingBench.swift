@@ -14,6 +14,12 @@ private final class StreamFolderGrant: @unchecked Sendable {
     deinit { if scoped { url.stopAccessingSecurityScopedResource() } }
 }
 
+nonisolated struct ProjectArchiveRequest: Identifiable, Sendable {
+    let id = UUID()
+    fileprivate let grants: [StreamFolderGrant]
+    var folders: [URL] { grants.map(\.url) }
+}
+
 @MainActor
 final class StreamingBench: ObservableObject {
     enum Dialog: String, Identifiable { case new; var id: String { rawValue } }
@@ -137,6 +143,7 @@ final class StreamingBench: ObservableObject {
     @Published var current: StreamRun?
     @Published var preview = LiveStreamPreview()
     @Published var projectDialog: Dialog?
+    @Published var archiveRequest: ProjectArchiveRequest?
     @Published var operation: String?
     @Published private(set) var operationProgress: Double?
     @Published private(set) var projectReviewRunning = false
@@ -220,6 +227,54 @@ final class StreamingBench: ObservableObject {
 
     func newProject(_ name: String) { chooseFolder(name: name) }
     func openProject() { chooseFolder(name: nil) }
+
+    var canExportProjects: Bool {
+        !busy && !timelineSaving && !quitting && jobTask == nil && archiveRequest == nil
+    }
+
+    func chooseProjectsToArchive() {
+        guard canExportProjects else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Export Projects as ZIP"
+        panel.message = "Hold ⌘ Command and click each Signal Bench Project folder to include."
+        panel.prompt = "Choose Projects"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.canCreateDirectories = false
+        panel.directoryURL = project?.folder.deletingLastPathComponent()
+        guard panel.runModal() == .OK, !panel.urls.isEmpty, canExportProjects else { return }
+        archiveRequest = .init(grants: panel.urls.map(StreamFolderGrant.init))
+    }
+
+    func exportProjectArchive(_ request: ProjectArchiveRequest, name: String) {
+        guard canExportProjects else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Save Project ZIP"
+        panel.message = "Choose a destination outside the selected Projects."
+        panel.prompt = "Save ZIP Here"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = request.folders.first?.deletingLastPathComponent()
+        guard panel.runModal() == .OK, let folder = panel.url, canExportProjects else { return }
+        let destination = StreamFolderGrant(folder)
+        notice = nil
+        performWithProgress("Exporting and verifying Project ZIP") { update in
+            do {
+                return try withExtendedLifetime(request.grants) {
+                    try withExtendedLifetime(destination) {
+                        try ProjectArchive.export(request.folders, named: name, to: destination.url, progress: update)
+                    }
+                }
+            } catch let error as POSIXError where error.code == .EEXIST {
+                throw StreamFailure.storage("That ZIP already exists. Choose a different name or destination.")
+            }
+        } completion: { [self, destination] url in
+            notice = "Exported and verified \(url.lastPathComponent)."
+            withExtendedLifetime(destination) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        }
+    }
 
     private func chooseFolder(name: String?) {
         guard !busy, !timelineSaving, !quitting, jobTask == nil, draftDecision == nil || needsProjectAccess,

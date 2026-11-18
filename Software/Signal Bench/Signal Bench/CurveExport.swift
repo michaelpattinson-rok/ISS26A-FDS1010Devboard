@@ -97,6 +97,7 @@ extension CurveDelivery {
             }
             try checkpoint()
             try archive.finish()
+            try archive.verify(checkpoint: checkpoint)
         }
         try validate()
         try checkpoint()

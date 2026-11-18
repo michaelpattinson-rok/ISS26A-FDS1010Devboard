@@ -266,6 +266,7 @@ struct StreamStudioView: View {
     @State private var timelineEntries: [RunTimelineEntry] = []
     @State private var showSaveDraft = false
     @State private var waveformHeight = WaveformHeight.standard
+    @State private var playback = RunPlayback()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1213,6 +1214,11 @@ struct StreamStudioView: View {
                 DotDensityControl(percent: $bench.dotDensity, plot: plot, rendererLimited: !metalPresented || metalFailed)
             }
             savedWaveform(plot)
+                .overlay { RunPlaybackMarker(playback: playback, range: plottedRange) }
+            if !reader.run.isManualDraft, reader.run.status == .complete || reader.run.status == .interrupted {
+                RunPlaybackControls(playback: playback, range: plottedRange,
+                                    ready: displayedSelectionReady && plot.stats.samples > 0 && !bench.busy)
+            }
             WaveformPositionControl(bounds: .init(lower: 0, upper: duration), selection: selectedRange) {
                 jump($0, width: upper - lower)
             }

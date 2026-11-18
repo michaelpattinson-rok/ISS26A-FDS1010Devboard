@@ -21,6 +21,7 @@ struct StreamingWorkspace: View {
     @State private var setupConfirmed = false
     @State private var background = true
     @State private var pendingProjectName: String?
+    @State private var pendingArchive: (ProjectArchiveRequest, String)?
     @State private var liveDetails = false
     @State private var confirmAnalysisSetup = false
     @State private var showSettings = false
@@ -105,6 +106,14 @@ struct StreamingWorkspace: View {
             StreamMetadataSheet(title: "New Project", name: "", description: nil, actionTitle: "Choose Parent…") { name, _ in
                 pendingProjectName = name
             }
+        }
+        .sheet(item: $bench.archiveRequest, onDismiss: {
+            if let (request, name) = pendingArchive {
+                pendingArchive = nil
+                bench.exportProjectArchive(request, name: name)
+            }
+        }) { request in
+            ProjectArchiveSheet(request: request) { name in pendingArchive = (request, name) }
         }
         .sheet(isPresented: $showSettings) {
             if let project = bench.project { ProjectSettingsPane(bench: bench, project: project) }
@@ -204,6 +213,8 @@ struct StreamingWorkspace: View {
                 Menu("Project", systemImage: "folder") {
                     Button("New Project…") { bench.projectDialog = .new }
                     Button("Open Project…") { bench.openProject() }
+                    Button("Export Projects as ZIP…") { bench.chooseProjectsToArchive() }
+                        .disabled(!bench.canExportProjects)
                     Button("Show Exports in Finder") { bench.showExports() }.disabled(bench.project == nil)
                 }.fixedSize().disabled(bench.busy || bench.draftDecision != nil)
             }
@@ -245,6 +256,8 @@ struct StreamingWorkspace: View {
                 Button("New Project…") { bench.projectDialog = .new }.buttonStyle(.borderedProminent)
                 Button("Open Project…") { bench.openProject() }
             }
+            Button("Export Projects as ZIP…", systemImage: "archivebox") { bench.chooseProjectsToArchive() }
+                .disabled(!bench.canExportProjects)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

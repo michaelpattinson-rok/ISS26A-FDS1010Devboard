@@ -1,6 +1,6 @@
 # FDS1010 Devboard E.1
 
-Rev E.1 is an 85 × 60 mm, two layer, through hole Devboard for one FDS1010 channel. Signal Bench 3.6.1 records the board over USB using the original Raspberry Pi Pico W or Arduino UNO R4 Minima.
+Rev E.1 is an 85 × 60 mm, two layer, through hole Devboard for one FDS1010 channel. Signal Bench 3.6.3 records the board over USB using the original Raspberry Pi Pico W or Arduino UNO R4 Minima.
 
 | Start here | Contents |
 | --- | --- |

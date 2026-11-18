@@ -53,3 +53,5 @@ CurveExport
 CurveInspection
 CalibratedPrerun
 AcquisitionBoard
+ProjectArchive
+RunPlayback

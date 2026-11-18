@@ -30,6 +30,8 @@ struct Signal_BenchApp: App {
                     .keyboardShortcut("n").disabled(bench.busy || bench.draftDecision != nil || bench.needsProjectAccess)
                 Button("Open Project…") { bench.openProject() }
                     .keyboardShortcut("o").disabled(bench.busy || (bench.draftDecision != nil && !bench.needsProjectAccess))
+                Button("Export Projects as ZIP…") { bench.chooseProjectsToArchive() }
+                    .disabled(!bench.canExportProjects)
                 Button("Show Exports in Finder") { bench.showExports() }
                     .disabled(bench.project == nil)
             }

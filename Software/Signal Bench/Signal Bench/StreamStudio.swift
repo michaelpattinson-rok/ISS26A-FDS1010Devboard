@@ -834,6 +834,7 @@ nonisolated enum StreamExporter {
             _ = try manifest.finish(file: "manifest.json", type: "signalbench.zip-manifest")
             try checkpoint()
             try archive.finish()
+            try archive.verify(checkpoint: checkpoint) { progress(0.98 + 0.019 * $0) }
         }
         try Task.checkCancellation()
         try reader.store.verify()
