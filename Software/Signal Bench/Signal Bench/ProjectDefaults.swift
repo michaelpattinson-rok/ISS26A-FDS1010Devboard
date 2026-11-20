@@ -9,7 +9,9 @@ nonisolated struct ProjectDefaults: Codable, Equatable, Sendable {
     var minutes = 5
     var noise = NoisePolicy.review
     var afterRecording: PostRunOption? = nil
-    var valid: Bool { (1...120).contains(minutes) }
+    var startupDelaySeconds: Int? = nil
+    var startupDelay: Int { startupDelaySeconds ?? StreamStartupDelay.defaultSeconds }
+    var valid: Bool { (1...120).contains(minutes) && StreamStartupDelay.supported.contains(startupDelay) }
 }
 
 nonisolated struct OpticalPreset: Codable, Identifiable, Sendable {

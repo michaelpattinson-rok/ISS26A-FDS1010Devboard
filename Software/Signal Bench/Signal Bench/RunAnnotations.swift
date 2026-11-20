@@ -136,7 +136,7 @@ nonisolated enum RunAnnotations {
     }
 
     static func preview(_ reader: StreamRangeReader, selection: StreamSelection, policy: NoisePolicy,
-                        settings: ReviewSettings, noiseProfile: CalibrationProfile? = nil,
+                        settings: ReviewSettings, noiseProfile: CalibrationProfile? = nil, limitContext: Bool = false,
                         checkpoint: () throws -> Void = {}) throws -> [ReviewInterval] {
         var settings = settings
         settings.maskGlitches = policy != .review
@@ -159,7 +159,7 @@ nonisolated enum RunAnnotations {
         let tile = 65_536
         let halo = StreamWire.samples(1024, at: rates.max() ?? Double(requested)) + settings.padBefore + settings.padAfter + settings.spikeWidth
         let context = Double(tile + halo + 2) / (rates.min() ?? Double(requested))
-        let expanded = StreamSelection(lower: max(0, selection.lower - context),
+        let expanded = limitContext ? selection : StreamSelection(lower: max(0, selection.lower - context),
                                        upper: min(try reader.duration(), selection.upper + context))
         try FixtureTiles.visit(reader, selection: expanded, halo: halo, tileSamples: tile, aligned: true) { span, owned in
             try checkpoint()

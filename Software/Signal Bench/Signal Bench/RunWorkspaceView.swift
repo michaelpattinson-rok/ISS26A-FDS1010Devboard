@@ -11,6 +11,7 @@ struct RunWorkspaceView: View {
     let rename: () -> Void
     let resume: () -> Void
     var sampleJump: LibrarySampleJump? = nil
+    var initialRange: StreamSelection?
     @State private var area: Area
     @State private var curves: [CurveManifest] = []
     @State private var selected: UUID?
@@ -35,12 +36,13 @@ struct RunWorkspaceView: View {
     @State private var showOriginalAnalysis = false
 
     init(bench: StreamingBench, reader: StreamRangeReader, rename: @escaping () -> Void, resume: @escaping () -> Void,
-         sampleJump: LibrarySampleJump? = nil, initialArea: Area = .waveform) {
+         sampleJump: LibrarySampleJump? = nil, initialArea: Area = .waveform, initialRange: StreamSelection? = nil) {
         self.bench = bench
         self.reader = reader
         self.rename = rename
         self.resume = resume
         self.sampleJump = sampleJump
+        self.initialRange = initialRange
         _area = State(initialValue: initialArea)
     }
 
@@ -140,7 +142,7 @@ struct RunWorkspaceView: View {
     private var rawWaveform: some View {
         StreamStudioView(bench: bench, reader: reader, rename: rename, resume: resume, sampleJump: sampleJump,
             workspaceRange: { range in selection = range }, openAnalysisOnLoad: showOriginalAnalysis,
-            requestedRangeOnLoad: selection.valid && rawDuration > 0 ? selection : nil,
+            requestedRangeOnLoad: showOriginalAnalysis && selection.valid && rawDuration > 0 ? selection : initialRange,
             didOpenAnalysis: { showOriginalAnalysis = false }, keepExactRange: { keep($0) })
     }
 
@@ -377,7 +379,7 @@ struct RunWorkspaceView: View {
                 bench.consumeCurveSelection()
             } else if !resolvedPreference {
                 resolvedPreference = true
-                selected = run.primaryCurve ?? value.2.flatMap { id in curves.contains(where: { $0.id == id }) ? id : nil }
+                selected = initialRange == nil ? (run.primaryCurve ?? value.2.flatMap { id in curves.contains(where: { $0.id == id }) ? id : nil }) : nil
             }
         } catch is CancellationError {
         } catch { issue = error.localizedDescription }

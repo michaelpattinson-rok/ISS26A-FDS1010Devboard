@@ -21,14 +21,38 @@ struct ProjectJobsView: View {
                     HStack {
                         Text("Automatic quality summary").fontWeight(.medium)
                         Spacer()
-                        Button("Pause") { bench.pausePostRun(active.key) }
+                        Button("Pause") { bench.pausePostRun(active.key) }.disabled(bench.qualityPaused.contains(active.key))
                     }
-                    ProgressView(value: active.value)
+                    Text(runName(active.key)).lineLimit(2)
+                    let progress = active.value
+                    Text(bench.qualityPaused.contains(active.key) ? "Pausing" : progress.stage.rawValue)
+                        .foregroundStyle(.secondary)
+                    if progress.total > 0 {
+                        ProgressView(value: progress.stage == .analyzing ? 1 : min(0.999, progress.fraction))
+                        Text("\(progress.scanned.formatted()) of \(progress.total.formatted()) readings · \(Int(min(progress.stage == .analyzing ? 100 : 99, progress.fraction * 100)))%")
+                            .monospacedDigit().foregroundStyle(.secondary)
+                    } else { ProgressView() }
+                    if let message = progress.message { Text(message).foregroundStyle(.secondary) }
                 }.font(.callout)
             }
-            if bench.jobs.isEmpty && bench.qualityProgress.isEmpty {
+            let paused = bench.qualityPaused.subtracting(bench.qualityProgress.keys)
+            let failed = bench.qualityIssues.keys.filter { !paused.contains($0) }
+            if !paused.isEmpty || !failed.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach((Array(paused) + failed).sorted { $0.uuidString < $1.uuidString }, id: \.self) { id in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(runName(id)).fontWeight(.medium)
+                                Text(bench.qualityIssues[id] ?? "Quality summary paused").foregroundStyle(.secondary)
+                                Button(paused.contains(id) ? "Resume" : "Retry") { bench.retryPostRun(id) }
+                            }
+                        }
+                    }
+                }.frame(maxHeight: 160)
+            }
+            if bench.jobs.isEmpty && bench.qualityProgress.isEmpty && paused.isEmpty && failed.isEmpty && !bench.projectReviewRunning {
                 Text("Exports and approved review jobs appear here.").foregroundStyle(.secondary)
-            } else {
+            } else if !bench.jobs.isEmpty {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(bench.jobs) { job in
@@ -53,6 +77,10 @@ struct ProjectJobsView: View {
                     }
                 }.padding(20).frame(width: 330)
             }
+    }
+
+    private func runName(_ id: UUID) -> String {
+        bench.runs.first { $0.id == id }?.run?.name ?? "Recording"
     }
 
     private func row(_ job: ProjectJob) -> some View {
@@ -109,11 +137,24 @@ struct ApproveProjectJobsView: View {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(jobs) { job in
                         VStack(alignment: .leading, spacing: 5) {
-                            Text(job.kind.title).fontWeight(.semibold).foregroundStyle(.primary)
+                            Text(job.title).fontWeight(.semibold).foregroundStyle(.primary)
                             Text(runName(job.input.run)).foregroundStyle(.primary)
                             Text("\(job.input.selection.lower.formatted()) to \(job.input.selection.upper.formatted()) s · \(job.input.recordedReadings.formatted()) estimated readings")
                             Text(job.kind.format == nil ? "Jobs result · \(job.id.uuidString)" : "Exports/\(job.name).zip")
                             Text("Estimated storage \(ByteCountFormatter.string(fromByteCount: job.estimatedBytes, countStyle: .file))")
+                            if let model = job.model {
+                                if let ranges = job.input.ranges, !ranges.isEmpty {
+                                    DisclosureGroup("Sample bounds and input hash") {
+                                        ForEach(ranges, id: \.segment) { range in
+                                            Text("\(range.segment.uuidString) · \(range.first.formatted()) to \(range.end.formatted()) exclusive")
+                                        }
+                                        Text(job.input.source).font(.caption.monospaced())
+                                    }
+                                }
+                                Text("\(model.model) · \(model.reasoning.title)")
+                                Text("Analyzer \(model.analyzer) · comparison \(model.comparison) · processing \(model.processing)")
+                                if job.kind == .zip { Text("Includes selected readings and timing. Linked runs and prior analyses are omitted.") }
+                            }
                             if let profile = job.input.profile { Text("Calibration \(profile.uuidString)") }
                             if let annotation = job.input.annotations { Text("Approved exclusions \(annotation.uuidString)") }
                             if let template = job.template {

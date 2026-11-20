@@ -66,6 +66,8 @@ import Darwin
                                 "Run stores Uno at both run and segment levels")
         try CurveChecks.require(legacy.run.version == 1 && legacy.run.settings.board == .picoW && legacy.run.settings.acquisitionBoard == nil,
                                 "Legacy projects keep their Pico format and inferred device")
+        try averagedRun(in: store)
+        try signalHealth(in: store)
         let selection = try FixtureTemplateStudy.fullRange(uno)
         let prepared = try uno.prepared()
         let plot = try StreamStudio.plot(prepared, selection: selection)
@@ -92,6 +94,161 @@ import Darwin
         verify.waitUntilExit()
         try CurveChecks.require(verify.terminationStatus == 0 && description.contains(board.title), "ZIP metadata preserves board identity")
         print("PASS: Uno PACK14 / raw faults / clocks / legacy reopen / 14-bit waveform and curve / ZIP board metadata")
+    }
+
+    private static func signalHealth(in store: StreamProjectStore) throws {
+        let rate = 100_000
+        let settings = StreamRunSettings(mode: .diagnosis, nominalRate: rate, wiring: "A0 synthetic", acquisitionBoard: .unoR4)
+        var clock = Data()
+        StreamWire.put(UInt32(48_000_000), into: &clock)
+        StreamWire.put(UInt32(480), into: &clock)
+        let start = StreamFrame(kind: .start, sequence: 0, stream: 4, boot: 5, index: 0, timeUS: 1_000,
+                                count: 0, auxiliary: UInt32(rate), flags: 0, payload: clock)
+        var words = Data()
+        for index in 0..<1024 {
+            let word: UInt16 = switch index {
+            case 0: 0
+            case 1: 0x3fff
+            case 2: 0x8000
+            default: index.isMultiple(of: 2) ? 9002 : 9000
+            }
+            StreamWire.put(word, into: &words)
+        }
+        let sum = UInt32(511 * 9000 + 510 * 9002)
+        let squares = UInt64(511) * 9000 * 9000 + UInt64(510) * 9002 * 9002
+        var body = Data()
+        StreamWire.put(sum, into: &body)
+        StreamWire.put(squares, into: &body)
+        for value: UInt16 in [9000, 9002, 1, 1, 1, 0] { StreamWire.put(value, into: &body) }
+        let rawStart = UInt64(97 * 1024)
+        var summary = StreamFrame(kind: .health, sequence: 98, stream: 4, boot: 5, index: rawStart,
+                                  timeUS: 1_004_520, count: 0, auxiliary: 1024, flags: 0, payload: body)
+        var parser = StreamParser(board: .unoR4, health: true)
+        var delivered: [StreamFrame] = []
+        delivered += try parser.append(StreamWire.encode(start))
+        let encoded = StreamWire.encode(summary)
+        for byte in encoded { delivered += try parser.append(Data([byte])) }
+        try CurveChecks.require(delivered.count == 2 && delivered.last?.index == rawStart, "Fragmentation preserves raw conversion index")
+        var averagedParser = StreamParser(averaging: .eight, board: .unoR4, health: true)
+        let averagedHealth = try averagedParser.append(encoded)
+        try CurveChecks.require(averagedHealth.first?.index == rawStart,
+                                "AVG14 telemetry continues to report original conversion positions")
+        try reject(encoded, parser: .init(board: .unoR4))
+        try reject(encoded, parser: .init(board: .picoW, health: true))
+        var badCRC = encoded
+        badCRC[badCRC.count - 1] ^= 1
+        try reject(badCRC, parser: .init(board: .unoR4, health: true))
+        var recovering = StreamParser(board: .unoR4, health: true)
+        let raw = StreamFrame(kind: .samples, sequence: 99, stream: 4, boot: 5,
+                              index: rawStart + 1024, timeUS: 1_014_760, count: 1024,
+                              auxiliary: 0, flags: 0, payload: words)
+        _ = try recovering.append(StreamWire.encode(start))
+        let missing = try recovering.append(badCRC)
+        let recovered = try recovering.append(StreamWire.encode(raw))
+        try CurveChecks.require(missing.isEmpty && recovered.count == 1 && recovered[0].payload == words,
+                                "Corrupt optional telemetry keeps the following raw frame intact")
+
+        var outcomes: [String] = []
+        for enabled in [false, true] {
+            let run = try store.makeRun(name: enabled ? "Health on" : "Health off", description: "Synthetic signal health", settings: settings)
+            let writer = try StreamRunWriter(store: store, run: run, stream: 4, firmware: enabled ? "1.2" : "1.1")
+            var account = StreamAccounting(stream: 4, channel: 0, rate: rate, board: .unoR4, health: enabled)
+            try account.accept(start)
+            try writer.append(start)
+            for block in 0..<196 {
+                let frame = StreamFrame(kind: .samples, sequence: UInt32(1 + block), stream: 4, boot: 5,
+                                        index: UInt64(block * 1024), timeUS: 1_000 + UInt64(10_240 * (1 + block)),
+                                        count: 1024, auxiliary: 0, flags: 0, payload: words)
+                try account.accept(frame)
+                try writer.append(frame)
+                if enabled && block == 97 {
+                    var malformed = summary
+                    malformed.payload[22] = 1
+                    try account.accept(malformed)
+                    try account.accept(summary)
+                    try account.accept(summary)
+                    try CurveChecks.require(account.healthReports == 1 && account.rejectedHealthReports == 2 &&
+                                            account.health?.minimum == 9000 && account.health?.maximum == 9002 &&
+                                            account.health?.low == 1 && account.health?.high == 1 && account.health?.errors == 1 &&
+                                            abs((account.health?.noise ?? 0) - 1) < 0.001, "Validate moments, flags, and duplicates")
+                }
+            }
+            if enabled {
+                try CurveChecks.require(account.healthOpportunities == 2 && account.healthReports == 1,
+                                        "One skipped scheduled snapshot does not count as lost samples")
+            }
+            var end = Data()
+            StreamWire.put(account.received, into: &end)
+            end.append(Data(count: 24))
+            try account.accept(.init(kind: .end, sequence: account.nextSequence, stream: 4, boot: 5,
+                                     index: account.received, timeUS: 2_100_000, count: 0, auxiliary: 0, flags: 0, payload: end))
+            let saved = try writer.finish(accounting: account, issue: nil)
+            try CurveChecks.require(account.knownLoss == 0 && saved.segments[0].savedSamples == 196 * 1024,
+                                    "Optional reports do not change Stop or saved sample accounting")
+            outcomes.append(contentsOf: try store.chunkSummaries(saved).map(\.sha256))
+        }
+        try CurveChecks.require(outcomes.count.isMultiple(of: 2) &&
+                                Array(outcomes.prefix(outcomes.count / 2)) == Array(outcomes.suffix(outcomes.count / 2)),
+                                "Health on and off have identical raw chunk hashes")
+        summary.count = 1
+        try CurveChecks.require(UnoSignalHealth(frame: summary) == nil, "A summary cannot claim sample payload")
+        print("PASS: negotiated telemetry, fragmentation, missing reports, invalid moments and CRC, Stop, and identical raw hashes")
+    }
+
+    private static func averagedRun(in store: StreamProjectStore) throws {
+        let board = AcquisitionBoard.unoR4
+        let factor = ADCAveraging.eight
+        let rawRate = 123_457
+        let settings = StreamRunSettings(mode: .manual, nominalRate: rawRate, duration: 2, picoAveraging: factor, acquisitionBoard: board)
+        let run = try store.makeRun(name: "Uno averages", description: "Synthetic AVG14 capture", settings: settings)
+        let writer = try StreamRunWriter(store: store, run: run, stream: 4, firmware: "1.1")
+        var accounting = StreamAccounting(stream: 4, channel: 0, rate: rawRate, averaging: factor, board: board)
+        var parser = StreamParser(averaging: factor, board: board)
+        func deliver(_ frame: StreamFrame) throws {
+            for decoded in try parser.append(StreamWire.encode(frame)) {
+                try accounting.accept(decoded)
+                try writer.append(decoded)
+            }
+        }
+        let groupCount = 128
+        var configuration = Data()
+        StreamWire.put(UInt32(48_000_000), into: &configuration)
+        StreamWire.put(UInt32(389), into: &configuration)
+        StreamWire.put(UInt32(8), into: &configuration)
+        try deliver(.init(kind: .start, sequence: 0, stream: 4, boot: 5, index: 0,
+                          timeUS: 11_000, count: 0, auxiliary: UInt32(rawRate), flags: 0, payload: configuration))
+        var payload = Data()
+        for index in 0..<groupCount {
+            let packed = index == 0 ?
+                UInt64(16383 + 5*9000) | (UInt64(1) << 17) | (UInt64(1) << 21) | (UInt64(1) << 25) :
+                UInt64(8*9000 + 1)
+            for offset in 0..<PicoAverage.stride(factor, board: board) { payload.append(UInt8(truncatingIfNeeded: packed >> (offset*8))) }
+        }
+        try deliver(.init(kind: .samples, sequence: 1, stream: 4, boot: 5, index: 0,
+                          timeUS: 19_300, count: UInt32(groupCount), auxiliary: 0, flags: 16, payload: payload))
+        var ending = Data()
+        StreamWire.put(UInt64(groupCount), into: &ending)
+        ending.append(Data(count: 24))
+        try deliver(.init(kind: .end, sequence: 2, stream: 4, boot: 5, index: 1024, timeUS: 19_400,
+                          count: 0, auxiliary: 0, flags: 0, payload: ending))
+        let saved = try writer.finish(accounting: accounting, issue: nil)
+        let reader = try StreamRangeReader(store: store, run: try store.openRun(saved.id)).prepared()
+        let selection = try FixtureTemplateStudy.fullRange(reader)
+        try CurveChecks.require(saved.status == .complete && saved.version == 5 && saved.settings.recordedRate == 48_000_000 / 389 / 8,
+                                "Save Uno AVG14 with conversion timing")
+        try CurveChecks.require(reader.index?.first?.averagingBoard == .unoR4, "Persist AVG14 coding in the chunk")
+        try reader.visit(selection) { part in
+            try CurveChecks.require(part.originalPayload == payload && part.groups?[1].mean == 9000.125 &&
+                                    part.groups?.first?.highRail == 1 && part.groups?.first?.adcErrors == 1,
+                                    "Reopen identical AVG14 bytes and exact values")
+        }
+        let curve = try CurveChecks.fit(reader, tolerance: 4)
+        try CurveChecks.require(curve.manifest.stats.high == 1 && curve.manifest.stats.sourceErrors == 1,
+                                "Curve fitting preserves Uno group faults")
+        let folder = try StreamExporter.export(reader, name: "Uno AVG14", selection: selection, format: .binary, includeAnalyses: false)
+        try CurveChecks.require(try Data(contentsOf: folder.appendingPathComponent("groups.avg14")) == payload,
+                                "Binary export preserves original Uno average bytes")
+        print("PASS AVG14 framed decode, timing, quality, immutable Project bytes, curve and binary export")
     }
 
     private static func liveQuality() throws {

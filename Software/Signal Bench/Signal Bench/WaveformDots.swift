@@ -10,6 +10,7 @@ nonisolated struct WaveformDots: Sendable {
     // X is relative to the viewport. Y is the original 12-bit ADC code.
     let values: [SIMD2<Float>]
     var averaged = false
+    var eligibleReadings: UInt64? = nil
 
     static func averages(_ means: [Double?], percent: Double) -> Self {
         let selection = WaveformDotSelection(percent: percent, limit: means.count, possible: means.count)

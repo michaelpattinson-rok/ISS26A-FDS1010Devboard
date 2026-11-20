@@ -4,6 +4,11 @@ import SwiftUI
 struct StreamingWorkspace: View {
     @ObservedObject var bench: StreamingBench
     @State private var viewerHidden = false
+    @State private var showDurationEditor = false
+    @State private var confirmDurationFinish = false
+    @State private var durationHours = ""
+    @State private var durationMinutes = ""
+    @State private var durationSeconds = ""
     @State private var name = ""
     @State private var description = ""
     @State private var minutes = 5
@@ -13,6 +18,15 @@ struct StreamingWorkspace: View {
     @State private var source = "CSA"
     @State private var wiringConfirmed = false
     @State private var showWiring = false
+    @State private var showHumTest = false
+    @State private var deviceCandidates = false
+    @State private var candidateSettings = UnoCandidateSettings()
+    private var canUseDeviceCandidates: Bool {
+        bench.supportsDeviceCandidates && bench.board == .unoR4 && bench.sampleRate == 100_000 &&
+            bench.adcAveraging == nil && selectedChannel == 0 &&
+            [.main, .manual, .diagnosis].contains(bench.mode)
+    }
+    @State private var humTestID: UUID?
     @State private var pin = 0
     @State private var output: UInt8?
     @State private var profileID: UUID?
@@ -35,6 +49,11 @@ struct StreamingWorkspace: View {
     }
 
     #if STREAM_TESTING
+    init(diagnosisLayout bench: StreamingBench) {
+        self.bench = bench
+        _showHumTest = State(initialValue: true)
+    }
+
     init(bench: StreamingBench, layoutProfile: UUID, layoutPrerun: CalibratedPrerun.Length, layoutLiveDetails: Bool = false) {
         self.bench = bench
         _profileID = State(initialValue: layoutProfile)
@@ -123,8 +142,11 @@ struct StreamingWorkspace: View {
             if page == .record { minutes = bench.defaults.minutes }
             rawWiringChecked = false
         }
+        .onChange(of: canUseDeviceCandidates) { _, available in if !available { deviceCandidates = false } }
         .onChange(of: bench.connectionEpoch) { _, _ in setupConfirmed = false; wiringConfirmed = false; rawWiringChecked = false; pin = bench.board == .unoR4 ? 2 : 0 }
-        .onChange(of: bench.project?.identity.id) { _, _ in setupConfirmed = false; profileID = nil }
+        .onChange(of: bench.project?.identity.id) { _, _ in
+            setupConfirmed = false; profileID = nil; humTestID = nil; showHumTest = false
+        }
         .confirmationDialog("Drive \(bench.board.digitalPin(pin))?", isPresented: Binding(get: { output != nil }, set: { if !$0 { output = nil } })) {
             Button(output == 5 ? "Drive High" : "Drive Low") {
                 if let output { bench.pin(pin, output) }
@@ -166,6 +188,8 @@ struct StreamingWorkspace: View {
             .onKeyPress(.upArrow) { moveSidebarFocus(-1) }
             .onKeyPress(.downArrow) { moveSidebarFocus(1) }
             Divider()
+            SidebarActivity().padding(.horizontal, 14).padding(.vertical, 10)
+            Divider().padding(.horizontal, 14)
             VStack(alignment: .leading, spacing: 12) {
                 Button("Project Settings", systemImage: "gearshape") { showSettings = true }
                     .disabled(bench.busy)
@@ -271,8 +295,19 @@ struct StreamingWorkspace: View {
                         if bench.mode == .manualRaw { rawOpticalControls }
                         if bench.mode == .calibrated {
                             calibratedControls
+                        } else if bench.mode == .diagnosis, let project = bench.project {
+                            Picker("Diagnosis tool", selection: $showHumTest) {
+                                Text("Stage Probes").tag(false)
+                                Text("60 Hz Test").tag(true)
+                            }.pickerStyle(.segmented).labelsHidden().fixedSize()
+                            if showHumTest {
+                                MainsHumTestView(bench: bench, project: project, selectedTest: $humTestID).id(project.identity.id)
+                            } else {
+                                diagnosisControls
+                                Divider()
+                                runFields
+                            }
                         } else {
-                            if bench.mode == .diagnosis { diagnosisControls }
                             if bench.mode == .manual {
                                 Text("Records \(bench.board.analogPin(0)) and shows GPIO state. Controllable pins start as inputs.").foregroundStyle(.secondary)
                             }
@@ -288,6 +323,9 @@ struct StreamingWorkspace: View {
             }
         }
         .onAppear { updateViewer() }
+        .onChange(of: bench.current?.settings.mainsHum) { _, capture in
+            if let capture { showHumTest = true; humTestID = capture.test }
+        }
         .onChange(of: viewerHidden) { _, _ in updateViewer() }
         .onChange(of: bench.liveFPS) { _, _ in updateViewer() }
         .onChange(of: bench.activeMode) { _, _ in updateViewer() }
@@ -344,12 +382,35 @@ struct StreamingWorkspace: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            if canUseDeviceCandidates {
+                Toggle("Device Candidates", isOn: $deviceCandidates)
+                if deviceCandidates {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Keep the input quiet for the first second. These diagnostic candidates are saved separately from the raw waveform.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        candidateField("Threshold (ADC codes)", $candidateSettings.threshold)
+                        candidateField("Minimum width (µs)", $candidateSettings.minWidthUS)
+                        candidateField("Maximum width (µs)", $candidateSettings.maxWidthUS)
+                        candidateField("Separation (µs)", $candidateSettings.separationUS)
+                        candidateField("Baseline shift limit (ADC codes)", $candidateSettings.driftLimit)
+                        candidateField("Noise limit (ADC codes RMS)", $candidateSettings.noiseLimit)
+                        if !candidateSettings.valid { Text("Check the candidate limits before starting.").foregroundStyle(.orange) }
+                    }.padding(.leading, 12)
+                }
+            }
             let isManual = bench.mode == .manual || bench.mode == .manualRaw
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) { startControls(isManual: isManual) }.fixedSize(horizontal: true, vertical: false)
                 VStack(alignment: .leading, spacing: 10) { startControls(isManual: isManual) }
             }
             if !bench.streaming { Text("Connect \(bench.board.title) with Signal Bench firmware to start.").font(.callout).foregroundStyle(.secondary) }
+        }
+    }
+
+    private func candidateField(_ title: String, _ value: Binding<Int>) -> some View {
+        LabeledContent(title) {
+            TextField(title, value: value, format: .number.grouping(.never))
+                .labelsHidden().textFieldStyle(.roundedBorder).frame(width: 90)
         }
     }
 
@@ -361,6 +422,10 @@ struct StreamingWorkspace: View {
             Text("min").foregroundStyle(.secondary)
             Stepper("Minutes", value: time, in: 1...120).labelsHidden()
         }.fixedSize()
+        if bench.defaults.startupDelay > 0 {
+            Text("\(bench.defaults.startupDelay) s settling before recording")
+                .font(.caption).foregroundStyle(.secondary)
+        }
         Button("Start Recording", systemImage: "record.circle") { start() }
             .buttonStyle(.borderedProminent).disabled(!ready)
     }
@@ -392,10 +457,12 @@ struct StreamingWorkspace: View {
                 VStack(alignment: .leading, spacing: 8) { recordingTitle; stopButton }
             }
             if let duration = bench.current?.settings.duration {
+                liveDurationControls(duration)
                 ProgressView(value: min(duration, recordingElapsed), total: duration)
                     .accessibilityLabel("Recording progress")
             }
             let data = bench.preview
+            if bench.activeMode == .diagnosis { DiagnosisHealthView(data: data, stopping: bench.stopping) }
             let hidden = viewerHidden && bench.activeMode != .manual
             if bench.activeMode != .manual {
                 HStack {
@@ -403,15 +470,13 @@ struct StreamingWorkspace: View {
                         viewerHidden.toggle()
                     }
                     if hidden {
-                        Button("Add Flag…", systemImage: "flag") { openTimeline(.flag) }
-                            .disabled(data.received == 0 || bench.timelineSaving)
                         Button("Add Note…", systemImage: "note.text") { openTimeline(.note) }
                             .disabled(bench.timelineSaving)
                     }
                 }
             }
             if !hidden {
-                LiveWaveformPane(bench: bench, addFlag: { openTimeline(.flag) }, addNote: { openTimeline(.note) })
+                LiveWaveformPane(bench: bench, addNote: { openTimeline(.note) })
             }
             if bench.activeMode == .manual {
                 Divider()
@@ -429,6 +494,120 @@ struct StreamingWorkspace: View {
         }
     }
 
+    private var editableDuration: Bool {
+        bench.recording && !bench.stopping && !bench.changingLiveDuration &&
+            bench.current?.settings.allowsLiveDurationEdit == true && bench.current?.segments.last != nil && (bench.preview.received > 0 || bench.preview.settlingRemaining != nil)
+    }
+
+    private var durationInputSeconds: Double? {
+        guard let hours = Int(durationHours), (0...2).contains(hours),
+              let minutes = Int(durationMinutes), (0...59).contains(minutes),
+              let seconds = Int(durationSeconds), (0...59).contains(seconds) else { return nil }
+        let total = Double(3600 * hours + 60 * minutes + seconds)
+        return (1...StreamWire.maxDuration).contains(total) ? total : nil
+    }
+
+    private func timerLabel(_ seconds: Double) -> String {
+        Duration.seconds(Int(max(0, seconds).rounded(.up))).formatted(.time(pattern: .hourMinuteSecond))
+    }
+
+    private func liveDurationControls(_ target: Double) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 22) { timerValues(target) }.fixedSize()
+                VStack(alignment: .leading, spacing: 8) { timerValues(target) }
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack { timeActions(target); flagActions }.fixedSize()
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack { timeActions(target) }
+                    HStack { flagActions }
+                }
+            }
+        }
+        .sheet(isPresented: $showDurationEditor) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Edit Recording Duration").font(.title2.weight(.semibold))
+                Text("Enter the total time from the start of logging. The startup delay is separate.")
+                    .foregroundStyle(.secondary)
+                HStack {
+                    durationField("Hours", $durationHours)
+                    durationField("Minutes", $durationMinutes)
+                    durationField("Seconds", $durationSeconds)
+                }.textFieldStyle(.roundedBorder)
+                if let total = durationInputSeconds {
+                    Text("Time remaining: " + timerLabel(total - recordingElapsed)).monospacedDigit()
+                    if total <= recordingElapsed {
+                        Text("The new target has elapsed. Applying it finishes and saves the current block.")
+                            .foregroundStyle(.secondary)
+                    } else if let run = bench.current, total > target,
+                              let estimate = RecordingEstimate(rate: run.settings.nominalRate,
+                                averaging: run.settings.picoAveraging, seconds: total - target,
+                                gpio: run.settings.mode == .manual, location: nil, board: run.settings.board) {
+                        Text("Budget about " + ByteCountFormatter.string(fromByteCount: estimate.projectBytes, countStyle: .file)
+                             + " for the extension, including recording overhead.").foregroundStyle(.secondary)
+                    }
+                } else { Text("Enter a total between 1 second and 2 hours.").foregroundStyle(.secondary) }
+                HStack {
+                    Button("Cancel") { showDurationEditor = false }.keyboardShortcut(.cancelAction)
+                    Spacer()
+                    Button(durationInputSeconds.map { $0 <= recordingElapsed } == true ? "Finish and Save" : "Apply") {
+                        guard let total = durationInputSeconds else { return }
+                        if total <= recordingElapsed { confirmDurationFinish = true }
+                        else { bench.changeLiveDuration(total); showDurationEditor = false }
+                    }.keyboardShortcut(.defaultAction).disabled(!editableDuration || durationInputSeconds == nil)
+                }
+            }.padding(22).frame(width: 420)
+                .confirmationDialog("Finish the recording now?", isPresented: $confirmDurationFinish) {
+                    Button("Finish and Save") {
+                        guard let total = durationInputSeconds else { return }
+                        bench.changeLiveDuration(total, finishIfElapsed: true)
+                        showDurationEditor = false
+                    }
+                }
+        }
+    }
+
+    private func durationField(_ label: String, _ value: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption).foregroundStyle(.secondary).accessibilityHidden(true)
+            TextField(label, text: value).accessibilityLabel(label)
+        }
+    }
+
+    @ViewBuilder
+    private func timerValues(_ target: Double) -> some View {
+        metric("Elapsed", timerLabel(recordingElapsed))
+        metric("Remaining", timerLabel(target - recordingElapsed))
+        metric("Target", timerLabel(target))
+    }
+
+    @ViewBuilder
+    private func timeActions(_ target: Double) -> some View {
+        if bench.current?.settings.allowsLiveDurationEdit == true {
+            Button("+1 min") { bench.changeLiveDuration(target + 60) }
+                .disabled(!editableDuration || target + 60 > StreamWire.maxDuration)
+            Button("+5 min") { bench.changeLiveDuration(target + 300) }
+                .disabled(!editableDuration || target + 300 > StreamWire.maxDuration)
+            Button("Edit Duration…") {
+                let whole = Int(target)
+                durationHours = String(whole / 3600)
+                durationMinutes = String(whole / 60 % 60)
+                durationSeconds = String(whole % 60)
+                showDurationEditor = true
+            }.disabled(!editableDuration)
+            if bench.changingLiveDuration { ProgressView().controlSize(.small).accessibilityLabel("Saving duration") }
+        }
+    }
+
+    @ViewBuilder
+    private var flagActions: some View {
+        Button("Add Flag…", systemImage: "flag") { openTimeline(.flag) }
+            .disabled(bench.preview.received == 0 || bench.timelineSaving)
+        Button("Flag Manager…", systemImage: "list.bullet") { openTimeline(.review) }
+            .disabled(bench.timelineSaving)
+    }
+
     @Environment(\.openWindow) private var openWindow
 
     private func openTimeline(_ tool: RunTimelineRequest.Tool) {
@@ -444,10 +623,11 @@ struct StreamingWorkspace: View {
         VStack(alignment: .leading, spacing: 5) {
             Text(bench.activeMode == .manual ? "Manual recording" : bench.current?.name ?? "Recording")
                 .font(.title.weight(.semibold)).lineLimit(2)
-            if let settings = bench.current?.settings, settings.mode == .calibrated {
-                let seconds = Int(max(0, settings.duration - recordingElapsed).rounded(.up))
-                let phase = settings.prerunPlan == nil ? "Measurement" : "Dark prerun"
-                Text(phase + " · " + Duration.seconds(seconds).formatted(.time(pattern: .hourMinuteSecond)) + " remaining")
+            if let remaining = bench.preview.settlingRemaining, !bench.stopping {
+                Text("Settling · \(Int(remaining.rounded(.up))) s before recording")
+                    .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+            } else if let settings = bench.current?.settings, settings.mode == .calibrated {
+                Text(settings.prerunPlan == nil ? "Measurement" : "Dark prerun")
                     .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
             } else if bench.activeMode != .manual {
                 Text(bench.current?.settings.bench?.step.rawValue ?? bench.activeMode?.rawValue ?? "Recording")
@@ -464,13 +644,8 @@ struct StreamingWorkspace: View {
 
     @ViewBuilder
     private func timingProgress(_ data: LiveStreamPreview) -> some View {
-        metric("Elapsed", recordingElapsed.formatted(.number.precision(.fractionLength(1))) + " s")
-        if let duration = bench.current?.settings.duration {
-            let seconds = Int(max(0, duration - recordingElapsed).rounded(.up))
-            metric("Remaining", Duration.seconds(seconds).formatted(.time(pattern: .hourMinuteSecond)))
-        }
         if let settings = bench.current?.settings {
-            metric(settings.benchSampling == true ? "Requested · Bench" : "Requested",
+            metric("Requested",
                    settings.nominalRate.formatted() + " samples/s")
             if let rate = data.configuredRate {
                 metric("ADC configured", (rate * Double(settings.factor)).formatted(.number.precision(.fractionLength(0...2))) + " samples/s")
@@ -532,7 +707,7 @@ struct StreamingWorkspace: View {
             }
             HStack {
                 Picker("Pin", selection: $pin) {
-                    ForEach((0..<29).filter { bench.board.gpioMask & (1 << $0) != 0 }, id: \.self) { Text(bench.board.digitalPin($0)).tag($0) }
+                    ForEach((0..<29).filter { bench.controllableGPIO & (1 << $0) != 0 }, id: \.self) { Text(bench.board.digitalPin($0)).tag($0) }
                 }.fixedSize()
                 Button("Input") { bench.pin(pin, 3) }
                 Button("Low") { output = 4 }.disabled(bench.preview.gpio?.leaseActive != true)
@@ -542,6 +717,9 @@ struct StreamingWorkspace: View {
                     Text(gpio.directions & mask == 0 ? "Input" : "Output")
                     Text(gpio.levels & mask == 0 ? "Low" : "High").monospaced()
                 } else { Text("Waiting for pin state").foregroundStyle(.secondary) }
+            }
+            if bench.reservedGPIO != 0 {
+                Text("GP16 through GP21 are reserved for the card, button and LED.").font(.caption).foregroundStyle(.secondary)
             }
             Text(bench.board == .unoR4 ? "D2 to D12 use 5 V logic. Keep them disconnected from the Devboard." : "GP26, GP27, GP28 and reserved pins stay protected.").font(.caption).foregroundStyle(.secondary)
         }.disabled(bench.stopping)
@@ -784,6 +962,11 @@ struct StreamingWorkspace: View {
         let mode = bench.mode
         let manual = mode == .manual || mode == .manualRaw
         var settings = StreamRunSettings(mode: mode, nominalRate: bench.sampleRate, duration: Double(durationInput.wrappedValue * 60), picoAveraging: bench.adcAveraging)
+        if canUseDeviceCandidates, deviceCandidates {
+            guard candidateSettings.valid else { bench.notice = "Check the candidate limits before starting."; return }
+            settings.unoCandidates = candidateSettings
+        }
+        deviceCandidates = false
         if mode == .main || manual { settings.draft = true }
         if mode == .manualRaw { settings.wiring = "Bare FDS1010 · \(bench.board.analogPin(0)) · relative optical" }
         if mode == .main, confirmAnalysisSetup,
@@ -849,17 +1032,31 @@ struct SamplingRatePicker: View {
     @State private var customText = ""
 
     private var preset: ADCAveraging? { averaging?.wrappedValue }
-    private var usesCustom: Bool { customEntry || !StreamWire.rates.contains(selection) }
+    private var usesCustom: Bool { customEntry || !bench.board.selectableRates.contains(selection) }
+    private var allowsCustom: Bool { !bench.connected || bench.customRates }
+    private var rangeLabel: String {
+        "\(bench.board.liveRange.lowerBound.formatted()) to \(bench.board.liveRange.upperBound.formatted())"
+    }
     private var rateMenu: Binding<Int> {
         Binding(get: { usesCustom ? -1 : selection }, set: { value in
-            customEntry = value == -1
-            if customEntry { customText = String(selection) }
-            else { selection = value }
+            if value == -1 {
+                customText = String(selection)
+                customEntry = true
+            } else {
+                customEntry = false
+                selection = value
+            }
         })
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
+            if !locked {
+                ViewThatFits(in: .horizontal) {
+                    HStack { profiles }.fixedSize()
+                    VStack(alignment: .leading) { profiles }
+                }
+            }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 14) { rawRate; average; recorded }.fixedSize()
                 VStack(alignment: .leading, spacing: 9) {
@@ -867,41 +1064,41 @@ struct SamplingRatePicker: View {
                     recorded.fixedSize()
                 }.fixedSize()
             }
-            benchButton
-            if bench.board == .picoW && usesCustom && bench.benchRatesEnabled {
-                TextField("Raw samples per second", text: $customText, prompt: Text("10,000 to 500,000"))
-                    .textFieldStyle(.roundedBorder).frame(maxWidth: 225).disabled(bench.busy || locked)
+            if usesCustom && !locked && allowsCustom {
+                TextField("Raw samples per second", text: $customText, prompt: Text(rangeLabel))
+                    .textFieldStyle(.roundedBorder).frame(maxWidth: 225).disabled(bench.busy)
                     .onChange(of: customText) { _, text in
+                        guard usesCustom else { return }
                         let value = Int(text.replacingOccurrences(of: ",", with: "").trimmingCharacters(in: .whitespaces)) ?? 0
-                        selection = StreamWire.customRates.contains(value) ? value : 0
+                        selection = bench.board.liveRange.contains(value) ? value : 0
                     }
                     .onAppear { if customText.isEmpty && selection > 0 { customText = String(selection) } }
-                if selection == 0 { Text("Enter 10,000 to 500,000 samples/s.").font(.caption).foregroundStyle(.secondary) }
+                if !bench.board.liveRange.contains(selection) {
+                    Text("Enter \(rangeLabel) samples/s.").font(.caption).foregroundStyle(.secondary)
+                }
             }
-            if StreamWire.customRates.contains(selection) {
+            if bench.board.liveRange.contains(selection) {
                 let configured = bench.board.rate(selection)
                 if abs(configured - Double(selection)) >= 0.005 {
                     Text("Configured ADC rate \(format(configured)) samples/s").font(.caption).foregroundStyle(.secondary)
                 }
             }
             if preset != nil {
-                Text("The Pico saves each group’s exact sum and quality counts. Individual conversions in an averaged group cannot be recovered.")
+                Text("The device saves each group’s exact sum and quality counts. Individual conversions cannot be recovered.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            if bench.connected && preset != nil && !bench.picoAveragingAvailable {
-                Label("Averaging requires Pico firmware 1.10 with AVG1 support. Select 1× to record with this firmware.",
-                      systemImage: "info.circle").font(.callout).foregroundStyle(.secondary)
-            } else if bench.board == .unoR4 && !locked {
-                Text(bench.benchRatesEnabled ? "Select 100,000 samples/s for the first Uno recording." : "Enable Bench Rates to record with the Uno.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            } else if bench.connected && !bench.rateAvailable(selection, channel: channel) && !bench.busy {
-                Text("This rate requires a compatible input and qualified configuration. Enable Bench Rates for testing.").font(.caption).foregroundStyle(.secondary)
+            if bench.connected && !bench.rateAvailable(selection, channel: channel, averaging: preset) && !bench.busy {
+                Text(preset != nil && !bench.deviceAveragingAvailable
+                     ? "This firmware does not support on-device averaging. Choose 1× or update the firmware."
+                     : "This rate is unavailable for the connected firmware and input.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if let seconds, seconds >= 1 {
                 RecordingStorageEstimate(rate: selection, averaging: preset, seconds: seconds, gpio: gpio,
-                                         location: bench.project?.folder)
+                                         location: bench.project?.folder, board: bench.board)
             }
         }
+        .onChange(of: bench.board) { _, _ in customEntry = false; customText = "" }
     }
 
     private func format(_ rate: Double) -> String { rate.formatted(.number.precision(.fractionLength(0...2))) }
@@ -910,14 +1107,11 @@ struct SamplingRatePicker: View {
         HStack(spacing: 6) {
             Text("Raw")
             Picker("Raw ADC rate", selection: rateMenu) {
-                ForEach(bench.board.benchRates.sorted(), id: \.self) { rate in
+                ForEach(bench.board.selectableRates.sorted(), id: \.self) { rate in
                     Text("\(rate.formatted()) samples/s").tag(rate)
-                        .disabled(bench.connected ? !bench.rateAvailable(rate, channel: channel) :
-                            !bench.board.standardRate(rate, channel: channel) && !bench.benchRatesEnabled)
+                        .disabled(bench.connected && !bench.rateAvailable(rate, channel: channel))
                 }
-                if bench.board == .picoW && (bench.benchRatesEnabled || usesCustom) {
-                    Text("Custom…").tag(-1).disabled(bench.connected && !bench.customRates)
-                }
+                if allowsCustom || usesCustom { Text("Custom…").tag(-1).disabled(!allowsCustom) }
             }.labelsHidden().fixedSize().disabled(bench.busy || locked)
         }
     }
@@ -929,9 +1123,9 @@ struct SamplingRatePicker: View {
                 Text("1×").tag(ADCAveraging?.none)
                 ForEach(ADCAveraging.allCases, id: \.self) { factor in
                     Text("\(factor.count)×").tag(Optional(factor))
-                        .disabled(bench.connected && !bench.picoAveragingAvailable)
+                        .disabled(bench.connected && !bench.deviceAveragingAvailable)
                 }
-            }.labelsHidden().fixedSize().disabled(bench.busy || locked || averaging == nil || bench.board == .unoR4)
+            }.labelsHidden().fixedSize().disabled(bench.busy || locked || averaging == nil)
         }
     }
 
@@ -939,22 +1133,27 @@ struct SamplingRatePicker: View {
         HStack(spacing: 6) {
             Text("Recorded")
             let rate = bench.board.rate(selection) / Double(preset?.count ?? 1)
-            Text(StreamWire.customRates.contains(selection) ? "\(format(rate)) readings/s" : "—")
+            Text(bench.board.liveRange.contains(selection) ? "\(format(rate)) readings/s" : "Unavailable")
                 .monospacedDigit().padding(.horizontal, 8).padding(.vertical, 4)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
         }.foregroundStyle(.secondary).accessibilityElement(children: .combine)
     }
 
-    @ViewBuilder private var benchButton: some View {
-        if !locked {
-            Button(bench.benchRatesEnabled ? "Leave Bench Rates" : "Enable Bench Rates") {
-                bench.setBenchRates(!bench.benchRatesEnabled)
-                if !bench.benchRatesEnabled {
-                    customEntry = false
-                    if !bench.board.standardRate(selection, channel: channel) { selection = StreamWire.rate }
-                }
-            }.disabled(bench.busy || bench.project == nil)
+    @ViewBuilder private var profiles: some View {
+        profile("Balanced", rate: 100_000, factor: nil)
+        profile("Smoothed", rate: bench.board == .unoR4 ? 200_000 : 500_000, factor: .eight)
+        profile("Full Detail", rate: bench.board.liveRange.upperBound, factor: nil)
+    }
+
+    private func profile(_ title: String, rate: Int, factor: ADCAveraging?) -> some View {
+        Button(title) {
+            customEntry = false
+            selection = rate
+            averaging?.wrappedValue = factor
         }
+        .help("\(rate.formatted()) raw samples/s at \(factor?.count ?? 1)×")
+        .disabled(bench.busy || (factor != nil && averaging == nil) ||
+                  (bench.connected && !bench.rateAvailable(rate, channel: channel, averaging: factor)))
     }
 }
 
@@ -964,9 +1163,10 @@ struct RecordingStorageEstimate: View {
     let seconds: Double
     let gpio: Bool
     let location: URL?
+    var board: AcquisitionBoard = .picoW
 
     var body: some View {
-        if let estimate = RecordingEstimate(rate: rate, averaging: averaging, seconds: seconds, gpio: gpio, location: location) {
+        if let estimate = RecordingEstimate(rate: rate, averaging: averaging, seconds: seconds, gpio: gpio, location: location, board: board) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Storage Estimate").font(.callout.weight(.semibold))
                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {

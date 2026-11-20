@@ -22,6 +22,7 @@ nonisolated final class RunExportZIP {
     private var offset: UInt64 = 0
     private var entries: [Entry] = []
     private var openEntry = false
+    private var prefix = ""
     private var completed = false
     private let flags: UInt16 = 0x0808 // UTF-8 names and trailing data descriptor
     private let version: UInt16 = 45
@@ -38,7 +39,15 @@ nonisolated final class RunExportZIP {
         handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
     }
 
-    func entry(_ path: String) throws -> Member {
+    func inFolder(_ folder: String, write: () throws -> Void) rethrows {
+        let previous = prefix
+        prefix += folder + "/"
+        defer { prefix = previous }
+        try write()
+    }
+
+    func entry(_ relativePath: String) throws -> Member {
+        let path = prefix + relativePath
         let name = Data(path.utf8)
         guard !completed, !openEntry, !name.isEmpty, name.count <= Int(UInt16.max),
               path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy({
@@ -67,6 +76,20 @@ nonisolated final class RunExportZIP {
             try member.write(bytes)
         }
         try member.finish()
+    }
+
+    func writeChecksums(checkpoint: () throws -> Void) throws {
+        let table = try entry("SHA256SUMS.txt")
+        for entry in entries {
+            try checkpoint()
+            let name = String(decoding: entry.name, as: UTF8.self)
+            guard !name.contains("\n"), !name.contains("\r") else {
+                throw StreamFailure.storage("An archive filename cannot be listed in SHA256SUMS.txt.")
+            }
+            let hash = entry.sha256.map { String(format: "%02x", $0) }.joined()
+            try table.write(Data("\(hash)  \(name)\n".utf8))
+        }
+        try table.finish()
     }
 
     func finish() throws {

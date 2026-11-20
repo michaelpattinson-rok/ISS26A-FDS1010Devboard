@@ -94,15 +94,17 @@ struct DotDensityControl: View {
                     .frame(minWidth: 58, idealWidth: 135, maxWidth: 250)
                 Text("\(displayPercent)%").font(.callout.monospacedDigit()).fixedSize()
             }
-            if plot?.dots?.averaged == true {
-                Text("Averaged dots · One mean per displayed bin").font(.caption).foregroundStyle(.secondary)
-            } else if let dots = plot?.dots {
+            if let plot, let dots = plot.dots {
                 let shown = rendererLimited ? min(dots.values.count, WaveformDots.canvasLimit) : dots.values.count
-                let denominator = (plot?.stats.samples ?? 0) - (plot?.stats.adcErrors ?? 0)
-                if denominator > 0 {
-                    let effective = Double(shown) / Double(denominator)
-                    Text("\(shown.formatted()) of \(denominator.formatted()) valid samples · \(effective.formatted(.percent.precision(.fractionLength(0...2))))")
+                if dots.averaged {
+                    Text("\(shown.formatted()) averaged dots · \(plot.stats.samples.formatted()) readings in overview")
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                } else {
+                    let denominator = dots.eligibleReadings ?? (plot.stats.samples - min(plot.stats.samples, plot.stats.adcErrors))
+                    if denominator > 0 {
+                        Text("\(shown.formatted()) original dots · \(denominator.formatted()) valid readings")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
                 }
             } else if plot != nil {
                 Text("Overview bins. Zoom in to see original dots.")

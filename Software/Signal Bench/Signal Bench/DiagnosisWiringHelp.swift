@@ -42,7 +42,7 @@ struct DiagnosisWiringHelp: View {
                         Text("The annotated Pico photograph shows the default CSA and GAIN probe labels. GP27 and GP28 keep the same physical positions for VMID or SHP. Use the selected source table above for the chosen J3 pins.")
                             .font(.callout)
                     }
-                    Image(acquisitionBoard == .unoR4 ? "DualBoardWiring" : includeOptional ? "StagePicoWiring" : "SetupPicoPhoto").resizable().scaledToFit()
+                    Image(acquisitionBoard == .unoR4 ? "UnoWiring" : includeOptional ? "StagePicoWiring" : "SetupPicoPhoto").resizable().scaledToFit()
                     Text("Use 3.3 V only. Keep oscilloscope ground on GND. Analog probe pins remain inputs. Labels and floating ADC values cannot establish that a wire is connected.")
                         .font(.callout).foregroundStyle(.secondary)
                 }.padding(20)

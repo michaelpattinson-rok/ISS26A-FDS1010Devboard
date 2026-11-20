@@ -100,6 +100,9 @@ actor WaveformRasterWorker {
         }
         let error: String? = await withCheckedContinuation { continuation in
             command.addCompletedHandler { result in
+                if result.status == .completed {
+                    WaveformGPUTiming.shared.record(start: result.gpuStartTime, end: result.gpuEndTime)
+                }
                 continuation.resume(returning: result.status == .completed ? nil : result.error?.localizedDescription ?? "Metal draw failed.")
             }
             command.commit()
@@ -131,13 +134,21 @@ struct MetalWaveformLayer: View {
     let dots: WaveformDots
     let range: ClosedRange<Double>
     let onPreparing: () -> Void
-    let onPresented: () -> Void
+    let onPresented: (UUID, ClosedRange<Double>) -> Void
     let onFailure: () -> Void
     var customTint: SIMD4<Float>? = nil
 
     @Environment(\.displayScale) private var scale
     @State private var worker = WaveformRasterWorker()
     @State private var frame: Frame?
+    @State private var pending: Input?
+    @State private var work: Task<Void, Never>?
+    @State private var generation = UUID()
+
+    private struct Input {
+        let request: Request
+        let dots: WaveformDots
+    }
 
     private struct Request: Equatable {
         let data: UUID
@@ -163,7 +174,17 @@ struct MetalWaveformLayer: View {
                     Image(decorative: frame.image, scale: scale).resizable().interpolation(.none)
                 } else { Color.clear }
             }
-            .task(id: request) { await draw(request) }
+            .onChange(of: request, initial: true) { _, request in
+                onPreparing()
+                pending = Input(request: request, dots: dots)
+                startDrawing()
+            }
+        }
+        .onDisappear {
+            generation = UUID()
+            work?.cancel()
+            work = nil
+            pending = nil
         }
     }
 
@@ -173,18 +194,29 @@ struct MetalWaveformLayer: View {
         return .init(Float(color.redComponent), Float(color.greenComponent), Float(color.blueComponent), 0.72)
     }
 
-    private func draw(_ request: Request) async {
-        guard !Task.isCancelled else { return }
-        onPreparing()
-        do {
-            let image = try await worker.image(renderer: renderer, dots: dots, range: range,
-                                               width: request.width, height: request.height, color: request.color)
-            guard !Task.isCancelled else { return }
-            frame = .init(request: request, image: image)
-            onPresented()
-        } catch is CancellationError {
-        } catch {
-            if !Task.isCancelled { onFailure() }
+    private func startDrawing() {
+        guard work == nil else { return }
+        let currentGeneration = generation
+        work = Task {
+            defer { if generation == currentGeneration { work = nil } }
+            while let input = pending, !Task.isCancelled {
+                pending = nil
+                let request = input.request
+                do {
+                    let image = try await worker.image(renderer: renderer, dots: input.dots, range: request.range,
+                                                       width: request.width, height: request.height, color: request.color)
+                    guard !Task.isCancelled, generation == currentGeneration else { return }
+                    if pending == nil {
+                        frame = .init(request: request, image: image)
+                        onPresented(request.data, request.range)
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    if !Task.isCancelled && generation == currentGeneration { onFailure() }
+                    return
+                }
+            }
         }
     }
 }

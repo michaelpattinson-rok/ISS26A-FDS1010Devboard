@@ -5,13 +5,18 @@
 #include <r_dtc.h>
 #include <r_elc.h>
 #include "tusb.h"
+#include "UnoAverage.h"
+#include "UnoSignalHealth.h"
+#include "UnoPulseCandidates.h"
 #include <inttypes.h>
 
 namespace {
-constexpr uint32_t clockHz = 48000000;
+constexpr uint32_t clockHz = uno_sampling::clockHz;
 constexpr uint16_t blockSamples = 1024;
 constexpr uint8_t queueSlots = 6;
 constexpr uint8_t headerBytes = 64;
+constexpr uint8_t healthFrame = 5;
+constexpr uint8_t pulseFrame = 6;
 constexpr uint32_t leaseMillis = 3000;
 constexpr uint64_t maxRunSamples = 3605000000ULL;
 constexpr uint8_t analogChannels[] = {9, 0, 1};
@@ -48,11 +53,21 @@ uint64_t stream, boot, sentCount, stampHigh;
 uint64_t txWaitAt, totalWaitUS, maximumWaitUS;
 uint32_t maximumPackUS;
 uint32_t previousStamp, sequence, period, directions, levels;
+unsigned average = 1;
 bool initialized, active, manual, outputLease, gpioPending, endQueued, packed;
 char command[128];
 uint8_t control[24];
 size_t cmdLen, cmdControl;
 bool commandOverflow;
+uint32_t healthStride;
+bool healthPending;
+uint64_t healthIndex, healthTime;
+uno_health::Summary healthSummary;
+uno_pulse::Detector pulses;
+bool pulseEnabled, pulsePending;
+uint64_t pulseTime;
+uint32_t pulseIndex, pulseCPUUS, pulsePeakUS;
+uint32_t pulseSequence;
 
 uint32_t crc(const uint8_t *data, size_t bytes, uint32_t state = 0xffffffffu) {
     while (bytes--) state = crcTable[(state ^ *data++) & 255u] ^ (state >> 8);
@@ -88,7 +103,7 @@ void frame(uint8_t kind, uint64_t index, uint64_t time, uint32_t count, uint32_t
     tx[5] = kind;
     put(tx + 6, headerBytes, 2);
     put(tx + 8, bytes, 4);
-    put(tx + 12, sequence++, 4);
+    put(tx + 12, kind == pulseFrame ? pulseSequence : (kind == healthFrame ? sequence - 1 : sequence++), 4);
     put(tx + 16, stream, 8);
     put(tx + 24, boot, 8);
     put(tx + 32, index, 8);
@@ -181,13 +196,13 @@ bool initAcquisition() {
     adcConfig.p_extend = &adcExtra;
     return R_ADC_Open(&adc, &adcConfig) == FSP_SUCCESS;
 }
-bool start(uint8_t channel, uint32_t rate) {
+bool start(uint8_t channel) {
     const uint8_t input = analogChannels[channel];
     if (R_IOPORT_PinCfg(&g_ioport_ctrl, digitalPinToBspPin(analogPins[channel]), IOPORT_CFG_ANALOG_ENABLE) != FSP_SUCCESS)
         return false;
     adcChannel.scan_mask = 1u << input;
     if (R_ADC_ScanCfg(&adc, &adcChannel) != FSP_SUCCESS) return false;
-    R_ADC0->ADSSTR[input] = rate == 500000 ? 32 : 64;
+    R_ADC0->ADSSTR[input] = 64;
     if (R_DTC_Reset(&dtc, const_cast<const uint16_t *>(&R_ADC0->ADDR[input]), blocks[0].words, blockSamples) != FSP_SUCCESS ||
         !timer.set_period(period) || !timer.reset() || R_ADC_ScanStart(&adc) != FSP_SUCCESS) return false;
     startUS = timeUS();
@@ -220,16 +235,43 @@ void parseStart() {
         const char hex = ch | 0x20;
         token = (token << 4) | unsigned(hex <= '9' ? hex - '0' : hex - 'a' + 10);
     }
-    if (!initialized || strlen(tokenHex) != 16 || fields != 5 || command[length] || !token || channel > 2 ||
-        (hz != 100000 && hz != 250000 && hz != 500000) ||
-        (strcmp(packing, "RAW14") && strcmp(packing, "PACK14")) ||
+    const bool averaged = !strcmp(packing, "AVG14");
+    unsigned factor = 1;
+    int suffix = 0;
+    if (fields == 5 && averaged &&
+        (sscanf(command + length, " %2u%n", &factor, &suffix) != 1 || !uno_sampling::validFactor(factor))) {
+        queueText("SB1 ERROR unsupported_average\n");
+        return;
+    }
+    const char *trailer = command + length + suffix;
+    const bool health = !strcmp(trailer, " HEALTH1");
+    uno_pulse::Settings pulse{};
+    int pulseLength = 0;
+    const bool candidates = sscanf(trailer, " PULSE1 %5u %4u %4u %4u %4u %4u%n", &pulse.threshold,
+        &pulse.minimum, &pulse.maximum, &pulse.separation, &pulse.drift, &pulse.noise, &pulseLength) == 6 &&
+        !trailer[pulseLength] && pulse.valid() && hz == 100000 && channel == 0 && !averaged;
+    const uint32_t timerPeriod = uno_sampling::period(hz);
+    if (!initialized || strlen(tokenHex) != 16 || fields != 5 || (*trailer && !health && !candidates) || !token || channel > 2 ||
+        (!averaged && strcmp(packing, "RAW14") && strcmp(packing, "PACK14")) ||
         (strcmp(mode, "RAW") && strcmp(mode, "DIAG") && strcmp(mode, "MANUAL")) ||
         (channel != 0 && strcmp(mode, "DIAG"))) {
         queueText("SB1 ERROR unsupported_start\n");
         return;
     }
+    if (!timerPeriod) {
+        queueText("SB1 ERROR UNO rate range is 10000 to 250000 samples/s\n");
+        return;
+    }
     stream = token;
-    period = clockHz / hz;
+    period = timerPeriod;
+    healthStride = health ? uno_health::stride(clockHz, period, blockSamples) : 0;
+    healthPending = false;
+    pulseEnabled = candidates;
+    pulsePending = false;
+    pulseCPUUS = pulsePeakUS = 0;
+    pulses = {};
+    pulses.settings = pulse;
+    average = factor;
     packed = !strcmp(packing, "PACK14");
     manual = !strcmp(mode, "MANUAL");
     outputLease = manual;
@@ -237,11 +279,12 @@ void parseStart() {
     endQueued = ended = gpioPending = stopRequested = false;
     txWaitAt = totalWaitUS = maximumWaitUS = maximumPackUS = 0;
     leaseAt = millis();
-    if (!start(channel, hz)) { releasePins(); queueText("SB1 ERROR adc_start\n"); return; }
+    if (!start(channel)) { releasePins(); queueText("SB1 ERROR adc_start\n"); return; }
     active = true;
     put(tx + headerBytes, clockHz, 4);
     put(tx + headerBytes + 4, period, 4);
-    frame(1, 0, startUS, 0, hz, channel, 8);
+    if (averaged) put(tx + headerBytes + 8, average, 4);
+    frame(1, 0, startUS, 0, hz, channel, averaged ? 12 : 8);
 }
 void controls() {
     if (control[4] != 1 || control[7] != 0 || get(control + 8, 8) != stream ||
@@ -252,6 +295,7 @@ void controls() {
         stopRequested = true;
         gpioPending = manual;
     } else if (op == 6 && pin == 0) {
+        if (pulseEnabled && directions) pulses.warmFailed = true;
         releasePins();
         gpioPending = manual;
     } else if (!stopRequested && !ended && op == 2 && pin == 0) {
@@ -260,6 +304,7 @@ void controls() {
     } else if (!stopRequested && !ended && manual && outputLease && pin >= 2 && pin <= 12 && op >= 3 && op <= 5 &&
                uint32_t(millis() - leaseAt) < leaseMillis) {
         const uint32_t bit = 1u << pin;
+        if (pulseEnabled && (op != 3 || directions & bit)) pulses.warmFailed = true;
         if (op == 3) {
             pinMode(pin, INPUT);
             directions &= ~bit;
@@ -291,9 +336,9 @@ void receiveUSB() {
                        (id->unique_id_words[1] ^ id->unique_id_words[3] ^ uint32_t(timeUS()));
                 if (!boot) boot = 1;
             }
-            char line[256];
-            snprintf(line, sizeof(line), "SB1 HELLO version=1 target=uno_r4_minima fixture=0 firmware=1.0 stream=%u boot_id=%08lx%08lx"
-                " rates=100000,250000,500000 diag_channels=0,1,2 adc=raw14 pack14=1\nSB1 STATUS pending=-\n",
+            char line[320];
+            snprintf(line, sizeof(line), "SB1 HELLO version=1 target=uno_r4_minima fixture=0 firmware=1.3 stream=%u boot_id=%08lx%08lx"
+                " rates=10000,25000,50000,100000,125000,200000,250000 diag_channels=0,1,2 adc=raw14 pack14=1 uno_range=10000-250000 avg14=1 health=1 pulse=1\nSB1 STATUS pending=-\n",
                 initialized ? 1u : 0u, static_cast<unsigned long>(boot >> 32), static_cast<unsigned long>(uint32_t(boot)));
             queueText(line);
         } else if (byte == '\n') {
@@ -306,7 +351,50 @@ void receiveUSB() {
         }
     }
 }
+void releasePulseBlock(bool gap) {
+    if (!pulsePending) return;
+    if (gap) pulses.resetPulse();
+    pulsePending = false;
+    __DMB();
+    ++consumed;
+}
+void pulseWork() {
+    const uint64_t start = timeUS();
+    if (pulses.filled == 0 || pulses.first != pulseIndex || pulses.filled == blockSamples) pulses.begin(pulseIndex);
+    const unsigned end = min(unsigned(blockSamples), pulses.filled + 64u);
+    const auto &words = blocks[consumed % queueSlots].words;
+    while (pulses.filled < end) pulses.append(words[pulses.filled]);
+    if (end == blockSamples) pulses.complete();
+    pulseCPUUS += uint32_t(timeUS() - start);
+    if (end != blockSamples) return;
+    pulsePeakUS = max(pulsePeakUS, pulseCPUUS);
+    const unsigned size = 8 + 20 * pulses.count;
+    if (produced != consumed + 1 || tud_cdc_write_available() < headerBytes + size) {
+        releasePulseBlock(true);
+        return;
+    }
+    uint8_t *to = tx + headerBytes;
+    put(to, pulses.coverage, 1);
+    put(to + 1, pulses.count, 1);
+    put(to + 2, 1, 2);
+    put(to + 4, pulseCPUUS, 4);
+    to += 8;
+    for (unsigned i = 0; i < pulses.count; ++i, to += 20) {
+        const auto &item = pulses.records[i];
+        put(to, item.start, 4);
+        put(to + 4, item.peak, 4);
+        put(to + 8, item.end, 4);
+        put(to + 12, item.height, 2);
+        put(to + 14, item.baseline, 2);
+        put(to + 16, item.decision, 1);
+        put(to + 17, 0, 3);
+    }
+    frame(pulseFrame, pulseIndex, pulseTime, 0, blockSamples, 0, size);
+    releasePulseBlock(false);
+}
+
 void dispatch() {
+    if (pulsePending && (stopRequested || ended || gpioPending || produced != consumed + 1)) releasePulseBlock(true);
     if (txSize) return;
     if (endQueued) { active = false; return; }
     if (gpioPending && !directions && (stopRequested || ended)) {
@@ -315,31 +403,56 @@ void dispatch() {
         gpioPending = false;
         return;
     }
-    if (consumed != produced) {
+    if (pulsePending) {
+        pulseWork();
+    } else if (consumed != produced) {
+        healthPending = false;
         __DMB();
         const auto &block = blocks[consumed % queueSlots];
         const uint64_t index = uint64_t(consumed) * blockSamples;
         const uint32_t count = blockSamples;
         uint8_t *dest = tx + headerBytes;
         const uint64_t packingStart = timeUS();
-        bool canPack = packed;
-        if (canPack) {
-            for (unsigned i = 0; i < count; i += 4) {
-                const uint16_t a=block.words[i], b=block.words[i+1], c=block.words[i+2], d=block.words[i+3];
-                if ((a|b|c|d) & 0xc000) { canPack = false; break; }
-                dest[0]=uint8_t(a); dest[1]=uint8_t((a>>8)|(b<<6)); dest[2]=uint8_t(b>>2);
-                dest[3]=uint8_t((b>>10)|(c<<4)); dest[4]=uint8_t(c>>4);
-                dest[5]=uint8_t((c>>12)|(d<<2)); dest[6]=uint8_t(d>>6);
-                dest += 7;
+        if (average > 1) {
+            for (unsigned i = 0; i < count; i += average)
+                dest += uno_sampling::encodeGroup(dest, block.words + i, average);
+            frame(2, index, block.endUS, count / average, 0, 16, size_t(dest - (tx + headerBytes)));
+        } else {
+            bool canPack = packed;
+            if (canPack) {
+                for (unsigned i = 0; i < count; i += 4) {
+                    const uint16_t a=block.words[i], b=block.words[i+1], c=block.words[i+2], d=block.words[i+3];
+                    if ((a|b|c|d) & 0xc000) { canPack = false; break; }
+                    dest[0]=uint8_t(a); dest[1]=uint8_t((a>>8)|(b<<6)); dest[2]=uint8_t(b>>2);
+                    dest[3]=uint8_t((b>>10)|(c<<4)); dest[4]=uint8_t(c>>4);
+                    dest[5]=uint8_t((c>>12)|(d<<2)); dest[6]=uint8_t(d>>6);
+                    dest += 7;
+                }
             }
+            if (!canPack) memcpy(tx + headerBytes, block.words, count * sizeof(uint16_t));
+            frame(2, index, block.endUS, count, 0, canPack ? 8 : 0, count * (canPack ? 7 : 8) / 4);
         }
-        if (!canPack) memcpy(tx + headerBytes, block.words, count * sizeof(uint16_t));
-        frame(2, index, block.endUS, count, 0, canPack ? 8 : 0, count * (canPack ? 7 : 8) / 4);
+        if (healthStride && (consumed + 1) % healthStride == 0 &&
+            produced == consumed + 1 && !stopRequested && !ended &&
+            tud_cdc_write_available() >= headerBytes + uno_health::payloadBytes) {
+            healthIndex = index;
+            healthTime = block.endUS;
+            healthSummary = uno_health::summarize(block.words, count);
+            healthPending = true;
+        }
         maximumPackUS = max(maximumPackUS, uint32_t(timeUS() - packingStart));
-        sentCount += count;
+        if (pulseEnabled && !stopRequested && !ended && produced == consumed + 1) {
+            pulseIndex = uint32_t(index);
+            pulseTime = block.endUS;
+            pulseSequence = sequence - 1;
+            pulseCPUUS = 0;
+            pulsePending = true;
+        }
+        sentCount += count / average;
         __DMB();
-        ++consumed;
+        if (!pulsePending) ++consumed;
     } else if (gpioPending) {
+        healthPending = false;
         uint32_t input = 0;
         for (uint8_t pin = 2; pin <= 12; ++pin)
             if (digitalRead(pin)) input |= 1u << pin;
@@ -349,6 +462,20 @@ void dispatch() {
         put(tx + headerBytes + 12, outputLease ? 1 : 0, 4);
         frame(3, uint64_t(produced) * blockSamples, timeUS(), 0, 0, 0, 16);
         gpioPending = false;
+    } else if (!ended && !stopRequested && healthPending) {
+        healthPending = false;
+        if (tud_cdc_write_available() >= headerBytes + uno_health::payloadBytes) {
+            uint8_t *payload = tx + headerBytes;
+            put(payload, healthSummary.sum, 4);
+            put(payload + 4, healthSummary.squares, 8);
+            put(payload + 12, healthSummary.minimum, 2);
+            put(payload + 14, healthSummary.maximum, 2);
+            put(payload + 16, healthSummary.low, 2);
+            put(payload + 18, healthSummary.high, 2);
+            put(payload + 20, healthSummary.errors, 2);
+            put(payload + 22, 0, 2);
+            frame(healthFrame, healthIndex, healthTime, 0, blockSamples, 0, uno_health::payloadBytes);
+        }
     } else if (ended) {
         (void)R_ADC_ScanStop(&adc);
         (void)R_DTC_Disable(&dtc);
@@ -357,7 +484,8 @@ void dispatch() {
         put(tx + headerBytes + 12, maximumPackUS, 4);
         put(tx + headerBytes + 16, maximumWaitUS, 8);
         put(tx + headerBytes + 24, totalWaitUS, 8);
-        frame(4, uint64_t(produced) * blockSamples, timeUS(), 0, stopReason, stopReason ? 1 : 0, 32);
+        if (pulseEnabled) put(tx + headerBytes + 32, pulsePeakUS, 4);
+        frame(4, uint64_t(produced) * blockSamples, timeUS(), 0, stopReason, stopReason ? 1 : 0, pulseEnabled ? 36 : 32);
         endQueued = true;
     }
 }
@@ -409,6 +537,10 @@ void loop() {
     if (txSize) {
         if (!tud_cdc_write_available()) {
             if (!txWaitAt && active) txWaitAt = timeUS();
+            else if ((healthPending || pulsePending) && txWaitAt && timeUS() - txWaitAt >= 2000) {
+                healthPending = false;
+                releasePulseBlock(true);
+            }
             return;
         }
         if (txWaitAt) {
@@ -420,6 +552,6 @@ void loop() {
         const size_t written = tud_cdc_write(tx + txOffset, txSize - txOffset);
         txOffset += written;
         if (txOffset == txSize) txSize = txOffset = 0;
-        if (written && !txSize && (!active || endQueued || consumed == produced)) tud_cdc_write_flush();
+        if (written && !txSize && (!active || endQueued || pulsePending || consumed == produced)) tud_cdc_write_flush();
     }
 }

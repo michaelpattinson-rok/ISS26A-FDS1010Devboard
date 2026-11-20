@@ -42,7 +42,7 @@ nonisolated struct CalibrationSetup: Codable, Equatable, Sendable {
     var standardWiring = true
 
     static let multiRateVersions = ["1.8", "1.8.1", "1.8.2", "1.8.3"]
-    static let streamingVersions = ["1.6", "1.6.1", "1.7"] + multiRateVersions + ["1.9", "1.10"]
+    static let streamingVersions = ["1.6", "1.6.1", "1.7"] + multiRateVersions + ["1.9", "1.10", "1.11"]
     static func firmwareLabel(_ version: String, board: AcquisitionBoard = .picoW) -> String { board.title + " · firmware " + version }
     func matchesFirmware(_ observed: String, board: AcquisitionBoard) -> Bool { acquisitionDevice == board && firmware == Self.firmwareLabel(observed, board: board) }
     func matchesFirmware(_ observed: String) -> Bool { matchesFirmware(observed, board: acquisitionDevice) }
@@ -51,9 +51,9 @@ nonisolated struct CalibrationSetup: Codable, Equatable, Sendable {
         [board, detector, cable, enclosure, conditions].allSatisfy {
             !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf8.count <= 250
         } && notes.utf8.count <= 2048 && ["LOW", "HIGH"].contains(gain)
-        && (picoAveraging == nil || matchesFirmware("1.10"))
-        && (acquisitionDevice == .unoR4 ? matchesFirmware("1.0") && acquisitionDevice.benchRates.contains(nominalHz) :
-            (["1.5"] + Self.streamingVersions).map { Self.firmwareLabel($0) }.contains(firmware) && (nominalHz == StreamWire.rate || ((matchesFirmware("1.9") || matchesFirmware("1.10")) && StreamWire.customRates.contains(nominalHz)) || (Self.multiRateVersions.contains(where: matchesFirmware) && [250_000, 500_000].contains(nominalHz)))) && channel == "ADC0" && standardWiring
+        && (picoAveraging == nil || (acquisitionDevice == .unoR4 ? (["1.1", "1.2", "1.3"].contains(where: matchesFirmware)) : matchesFirmware("1.10") || matchesFirmware("1.11")))
+        && (acquisitionDevice == .unoR4 ? (matchesFirmware("1.0") && picoAveraging == nil && [100_000, 250_000, 500_000].contains(nominalHz)) || ((["1.1", "1.2", "1.3"].contains(where: matchesFirmware)) && acquisitionDevice.liveRange.contains(nominalHz)) :
+            (["1.5"] + Self.streamingVersions).map { Self.firmwareLabel($0) }.contains(firmware) && (nominalHz == StreamWire.rate || ((matchesFirmware("1.9") || matchesFirmware("1.10") || matchesFirmware("1.11")) && StreamWire.customRates.contains(nominalHz)) || (Self.multiRateVersions.contains(where: matchesFirmware) && [250_000, 500_000].contains(nominalHz)))) && channel == "ADC0" && standardWiring
     }
 
     func matchesAcquisition(_ other: Self) -> Bool {

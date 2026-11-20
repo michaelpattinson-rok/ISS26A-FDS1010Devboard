@@ -1,5 +1,41 @@
 import SwiftUI
 
+nonisolated struct LiveWaveformPosition {
+    // A live position is a delay from the advancing edge. A frozen position is absolute.
+    var delay: Double = 0
+
+    func range(end: Double, span: Double, minimum: Double, frozenCenter: Double?) -> StreamSelection {
+        guard end > 0 else { return .init(lower: 0, upper: 0) }
+        let zoom = WaveformZoom(bounds: .init(lower: 0, upper: end), minimum: minimum)
+        let width = min(end, max(zoom.smallest, span))
+        return zoom.window(center: frozenCenter ?? end - delay - width / 2, span: width)
+    }
+
+    mutating func move(to center: Double, end: Double, span: Double, minimum: Double) {
+        let selected = range(end: end, span: span, minimum: minimum, frozenCenter: center)
+        delay = max(0, end - selected.upper)
+    }
+}
+
+nonisolated struct LivePresentationMeter {
+    private var first: Double?
+    private var last: Double?
+    private var frames = 0
+
+    mutating func record(_ timestamp: Double) -> Double? {
+        guard timestamp.isFinite, timestamp > (last ?? 0) else { return nil }
+        last = timestamp
+        guard let first else { self.first = timestamp; return nil }
+        frames += 1
+        let span = timestamp - first
+        guard span >= 1 else { return nil }
+        let value = Double(frames) / span
+        self.first = timestamp
+        frames = 0
+        return value
+    }
+}
+
 struct LiveWaveformPane: View {
     private enum Window: String, CaseIterable, Identifiable {
         case latest = "Latest Samples", quarter = "Last 250 ms", one = "Last 1 second", five = "Last 5 seconds"
@@ -21,7 +57,6 @@ struct LiveWaveformPane: View {
     }
 
     @ObservedObject var bench: StreamingBench
-    let addFlag: () -> Void
     let addNote: () -> Void
     @State private var window = Window.ten
     @State private var originalLiveDots = false
@@ -29,20 +64,28 @@ struct LiveWaveformPane: View {
     @State private var customMilliseconds = 250
     @State private var zoomedSpan: Double?
     @State private var center: Double?
+    @State private var position = LiveWaveformPosition()
     @State private var height = WaveformHeight.standard
     @State private var paused: LiveWaveformCapture?
     @State private var pausing = false
     @State private var pauseTask: Task<Void, Never>?
     @State private var metalFailed = false
     @State private var metalPresented = false
+    @State private var presentedDotFrame: UUID?
+    @State private var fps = LivePresentationMeter()
+    @State private var actualFPS: Double?
+    @State private var displayBehind = false
+    @State private var skippedPreviewUpdates: UInt64 = 0
     @State private var display: Display?
     @State private var previous: WaveformOverview?
     @State private var issue: String?
     @State private var flagTimes: [Double] = []
+    @State private var pendingFlagTimes: [Double] = []
     @State private var pendingFlag: UInt64?
     @State private var markerTask: Task<Void, Never>?
 
     private struct Display {
+        var id = UUID()
         let range: StreamSelection
         let plot: StudioPlot
         let latestCode: UInt16?
@@ -55,7 +98,7 @@ struct LiveWaveformPane: View {
         let zoom: Double?
         let center: Double?
         let pausedAt: Date?
-        let pausing: Bool
+        let delay: Double
         let density: Double?
         let originalLiveDots: Bool
         let dotLimit: Int
@@ -69,17 +112,17 @@ struct LiveWaveformPane: View {
     private var bounds: StreamSelection { .init(lower: 0, upper: currentEnd) }
     private var validCustom: Bool { Int(customText).map { (1...7_200_000).contains($0) } == true }
 
-    private func visibleRange(end: Double, rate: Double) -> StreamSelection {
-        guard end > 0 else { return .init(lower: 0, upper: 0) }
-        let wanted = zoomedSpan ?? window.span(rate: rate, end: end, milliseconds: customMilliseconds)
-        let zoom = WaveformZoom(bounds: .init(lower: 0, upper: end), minimum: 2 / rate)
-        return zoom.window(center: center ?? end, span: wanted)
+    private func visibleRange(end: Double, rate: Double, request: Request? = nil) -> StreamSelection {
+        let request = request ?? self.request
+        let wanted = request.zoom ?? request.window.span(rate: rate, end: end, milliseconds: request.custom)
+        return LiveWaveformPosition(delay: request.delay).range(end: end, span: wanted, minimum: 2 / rate,
+                                                               frozenCenter: request.pausedAt != nil ? request.center ?? end : nil)
     }
 
     private var request: Request {
         let density = bench.waveformStyle == .points ? bench.dotDensity : nil
         return .init(run: bench.current?.id, window: window, custom: customMilliseconds,
-                     zoom: zoomedSpan, center: center, pausedAt: paused?.raw.click, pausing: pausing, density: density,
+                     zoom: zoomedSpan, center: center, pausedAt: paused?.raw.click, delay: position.delay, density: density,
                      originalLiveDots: originalLiveDots,
                      dotLimit: density != nil && canUseMetal ? WaveformDots.liveLimit : WaveformDots.canvasLimit,
                      previousReady: previous != nil, fps: bench.liveFPS)
@@ -89,11 +132,23 @@ struct LiveWaveformPane: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 Text("Live Waveform").font(.headline)
+                if displayBehind && paused == nil {
+                    Text("Preview behind").font(.caption).foregroundStyle(.orange).lineLimit(1)
+                        .help("The viewer is taking longer than the FPS goal. Saved samples are tracked separately.")
+                }
                 if paused != nil { Text("Paused").font(.caption).foregroundStyle(.secondary) }
+                else if position.delay > 0 {
+                    Text("\(WaveformTime.span(position.delay)) behind live").font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Spacer(minLength: 6)
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { actions }.fixedSize()
-                    HStack(spacing: 8) { actions }.labelStyle(.iconOnly).fixedSize()
+                    HStack(spacing: 8) { flagActions; viewingActions }.fixedSize()
+                    HStack(spacing: 8) {
+                        HStack(spacing: 8) { flagActions }.labelStyle(.iconOnly)
+                        viewingActions
+                    }.fixedSize()
+                    HStack(spacing: 8) { flagActions; viewingActions }.labelStyle(.iconOnly).fixedSize()
                 }
             }
             HStack(spacing: 10) {
@@ -103,13 +158,17 @@ struct LiveWaveformPane: View {
             if window == .custom { customField }
             WaveformZoomControl(bounds: bounds, selection: visibleRange(end: currentEnd, rate: configuredRate),
                                 minimum: 2 / configuredRate, change: zoom,
-                                home: { window = .all; zoomedSpan = nil; center = nil })
+                                home: showAll)
             if let display {
                 readings(display)
                 chart(display)
+                    .onChange(of: display.id, initial: true) { _, _ in
+                        if display.plot.dots?.values.isEmpty != false || !canUseMetal || paused != nil {
+                            notePresentation(ProcessInfo.processInfo.systemUptime)
+                        }
+                    }
                 WaveformPositionControl(bounds: bounds, selection: display.range) { target in
-                    if paused == nil { pause(center: target) }
-                    else { center = target }
+                    move(to: target, span: display.range.upper - display.range.lower)
                 }
                 if paused != nil {
                     let format = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(0...6))
@@ -122,7 +181,8 @@ struct LiveWaveformPane: View {
                 }
                 WaveformSignalQuality(stats: display.plot.stats, estimated: display.plot.indexed, board: bench.board)
             } else {
-                Text("Waiting for waveform samples").font(.callout).foregroundStyle(.secondary)
+                Text(bench.preview.settlingRemaining == nil ? "Waiting for waveform samples" : "Settling before waveform display")
+                    .font(.callout).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: height.points)
                     .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
             }
@@ -132,7 +192,7 @@ struct LiveWaveformPane: View {
             }
             if let issue { Text(issue).font(.caption).foregroundStyle(.secondary) }
         }
-        .task(id: request) { await refresh(request) }
+        .task(id: bench.current?.id) { await refresh() }
         .task(id: bench.current?.segments.last?.id) {
             previous = nil
             do {
@@ -152,13 +212,23 @@ struct LiveWaveformPane: View {
         .onDisappear { pauseTask?.cancel(); markerTask?.cancel() }
     }
 
-    @ViewBuilder private var actions: some View {
-        Button("Add Flag…", systemImage: "flag", action: addFlag)
-            .disabled(bench.preview.received == 0 || bench.timelineSaving).help("Add Flag")
+    @ViewBuilder private var flagActions: some View {
         Button("Add Note…", systemImage: "note.text", action: addNote)
             .disabled(bench.timelineSaving).help("Add Note")
+    }
+
+    @ViewBuilder private var viewingActions: some View {
+        if paused != nil {
+            Button("Refresh Once", systemImage: "arrow.clockwise") { pause(replacing: true) }
+                .disabled(pausing || bench.stopping)
+                .help("Show the latest samples once and keep the waveform paused")
+        }
+        if paused == nil, position.delay > 0 {
+            Button("Jump to Live", systemImage: "forward.end") { position.delay = 0 }
+                .help("Show the newest samples at the current zoom")
+        }
         Button(paused == nil ? "Pause View" : "Follow Live", systemImage: paused == nil ? "pause" : "play") {
-            if paused != nil { paused = nil; center = nil }
+            if paused != nil { paused = nil; center = nil; position.delay = 0; fps = .init(); actualFPS = nil }
             else { pause() }
         }
         .disabled(pausing || currentEnd <= 0)
@@ -170,7 +240,7 @@ struct LiveWaveformPane: View {
             ForEach(Window.allCases) { Text($0.rawValue).tag($0) }
         }
         .fixedSize()
-        .onChange(of: window) { _, _ in zoomedSpan = nil; center = nil }
+        .onChange(of: window) { _, _ in zoomedSpan = nil; center = nil; position.delay = 0 }
     }
 
     @State private var showDisplay = false
@@ -185,12 +255,22 @@ struct LiveWaveformPane: View {
                             ForEach(WaveformHeight.allCases) { Text($0.rawValue).tag($0) }
                         }.fixedSize()
                         WaveformFPSControl(fps: $bench.liveFPS)
+                        LabeledContent("Actual FPS", value: actualFPS.map {
+                            $0.formatted(.number.precision(.fractionLength(1)))
+                        } ?? "…").fixedSize()
+                            .help("Recent Metal presentations or Canvas plot updates. This is separate from the sample rate.")
+                    }
+                    if skippedPreviewUpdates > 0 {
+                        Text("Preview updates skipped: \(skippedPreviewUpdates.formatted())")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .help("Only the viewer skipped these updates. See saved sample and gap counters for recording coverage.")
                     }
                     if bench.waveformStyle == .points {
-                        Toggle("Original dots while following live", isOn: $originalLiveDots)
+                        Toggle("Original Dots", isOn: $originalLiveDots)
                             .help("Use original dots in wider live windows. Paused views can show original dots at close zoom.")
                         DotDensityControl(percent: $bench.dotDensity, plot: display?.plot,
-                                          rendererLimited: !metalPresented || !canUseMetal)
+                                          rendererLimited: !canUseMetal || (paused == nil
+                                            ? presentedDotFrame != display?.plot.dots?.id : !metalPresented))
                     }
                 }.padding(14)
             }
@@ -254,13 +334,24 @@ struct LiveWaveformPane: View {
         chart.means = plot.means
         chart.style = bench.waveformStyle
         chart.allowMetal = canUseMetal
+        chart.directLiveMetal = paused == nil
+        chart.onLivePresentation = { id, timestamp in
+            presentedDotFrame = id
+            notePresentation(timestamp)
+        }
         chart.metalFailed = $metalFailed
         chart.metalPresentation = $metalPresented
         chart.referenceTime = paused?.raw.bounds.upper
         chart.flagTimes = flagTimes
-        chart.home = { window = .all; zoomedSpan = nil; center = nil }
+        chart.pendingFlagTimes = pendingFlagTimes
+        chart.home = showAll
         chart.navigate = navigate
         return chart
+    }
+
+    private func notePresentation(_ timestamp: Double) {
+        guard paused == nil else { return }
+        if let result = fps.record(timestamp) { actualFPS = result }
     }
 
     private func zoom(_ span: Double) {
@@ -276,87 +367,132 @@ struct LiveWaveformPane: View {
         if let anchor {
             let proposed = span * exp2(amount)
             let width = min(currentEnd, max(2 / configuredRate, proposed))
-            if paused != nil { center = range.lower + anchor * span + (0.5 - anchor) * width }
+            if paused != nil || position.delay > 0 {
+                move(to: range.lower + anchor * span + (0.5 - anchor) * width, span: width)
+            }
             zoomedSpan = width
         } else {
             let target = (range.lower + range.upper) / 2 + amount * span
-            if paused == nil { pause(center: target) }
-            else { center = target }
+            move(to: target, span: span)
         }
     }
 
-    private func pause(center desiredCenter: Double? = nil) {
-        guard !pausing, paused == nil else { return }
+    private func showAll() {
+        window = .all
+        zoomedSpan = nil
+        center = nil
+        position.delay = 0
+    }
+
+    private func move(to target: Double, span: Double) {
+        if paused != nil { center = target }
+        else { position.move(to: target, end: currentEnd, span: span, minimum: 2 / configuredRate) }
+    }
+
+    private func pause(replacing: Bool = false) {
+        guard !pausing, replacing == (paused != nil) else { return }
         let instant = DispatchTime.now().uptimeNanoseconds
         let date = Date()
+        let displayed = display?.range
+        let keepPosition = !replacing && position.delay > 0
         pausing = true
         pauseTask = Task {
             let capture = await bench.captureWaveform(at: instant, date: date, seconds: 30)
             guard !Task.isCancelled else { return }
             if let capture {
                 paused = capture
-                center = desiredCenter
+                actualFPS = nil
+                fps = .init()
+                center = keepPosition ? displayed.map { ($0.lower + $0.upper) / 2 } : nil
                 issue = nil
             } else {
-                issue = "No samples were available to pause."
+                issue = replacing ? "The paused waveform could not be refreshed." : "No samples were available to pause."
             }
             pausing = false
         }
     }
 
-    private func refresh(_ request: Request) async {
-        guard !request.pausing else { return }
-        let frozen = paused
+    private func refresh() async {
+        var lastRequest: Request?
         var renderedRange: StreamSelection?
-        var renderedSample: UInt64?
-        repeat {
-            guard !Task.isCancelled else { return }
+        var renderedBoundary: Double?
+        var renderedRevision: UInt64?
+        let clock = ContinuousClock()
+        while !Task.isCancelled {
+            let started = clock.now
+            let request = self.request
+            let frozen = paused
             let live = bench.preview
             let rate = configuredRate
-            var range = visibleRange(end: currentEnd, rate: rate)
+            var range = visibleRange(end: currentEnd, rate: rate, request: request)
             let requestedRange = range
-            if range.valid, requestedRange != renderedRange || renderedSample != live.received {
-                renderedRange = requestedRange
-                renderedSample = live.received
+            let boundary = frozen == nil ? live.waveformBoundary : nil
+            if range.valid, request != lastRequest || requestedRange != renderedRange || boundary != renderedBoundary {
                 let width = range.upper - range.lower
                 let possible = width * rate
                 let wantsRaw = width <= 0.25 || (request.density != nil && (frozen != nil || request.originalLiveDots)
                                                 && possible <= Double(WaveformDots.rawReadLimit))
                 var capture = frozen
-                if capture == nil, wantsRaw, width <= 30 {
+                if capture == nil, wantsRaw, request.delay + width <= LiveFlagHistory.seconds {
                     let instant = DispatchTime.now().uptimeNanoseconds
-                    capture = await bench.captureWaveform(at: instant, date: .now, seconds: min(30, width + 0.02))
-                    if let capture { range = visibleRange(end: capture.raw.bounds.upper, rate: rate) }
+                    capture = await bench.captureWaveform(at: instant, date: .now,
+                                                          seconds: min(LiveFlagHistory.seconds, request.delay + width + 0.02))
+                    if let candidate = capture {
+                        let recent = candidate.raw.bounds
+                        let selected = visibleRange(end: recent.upper, rate: rate, request: request)
+                        if selected.lower >= recent.lower - 1 / rate { range = selected }
+                        else { capture = nil }
+                    }
                 }
                 guard !Task.isCancelled else { return }
                 do {
+                    let result: StudioPlot
                     if let frozen, range.lower < frozen.raw.bounds.lower - 1e-9,
                        wantsRaw, range.upper <= frozen.raw.bounds.lower + 1e-9,
-                       let result = try await bench.readRecordingWaveform(range, density: request.density, limit: request.dotLimit) {
-                        guard !Task.isCancelled else { return }
-                        display = .init(range: range, plot: result, latestCode: lastCode(frozen))
+                       let saved = try await bench.readRecordingWaveform(range, density: request.density, limit: request.dotLimit) {
+                        result = saved
                     } else {
-                        let result = try await render(range: range, rate: rate, live: live, capture: capture,
+                        result = try await render(range: range, rate: rate, live: live, capture: capture,
                                                       prior: previous, request: request)
-                        guard !Task.isCancelled else { return }
+                    }
+                    guard !Task.isCancelled else { return }
+                    if frozen?.raw.click == paused?.raw.click {
                         display = .init(range: range, plot: result, latestCode: frozen.map(lastCode) ?? live.latestCode)
+                        lastRequest = request
+                        renderedRange = requestedRange
+                        renderedBoundary = boundary
+                        if frozen == nil {
+                            if let renderedRevision, live.waveformRevision > renderedRevision + 1 {
+                                skippedPreviewUpdates += live.waveformRevision - renderedRevision - 1
+                            }
+                            renderedRevision = live.waveformRevision
+                        } else { renderedRevision = nil }
+                        if issue != nil { issue = nil }
                     }
                 } catch {
                     if !Task.isCancelled { issue = error.localizedDescription }
                 }
             }
-            if frozen != nil { return }
-            try? await Task.sleep(for: .nanoseconds(1_000_000_000 / max(1, request.fps)))
-        } while !Task.isCancelled
+            let fps = frozen == nil ? request.fps : min(10, request.fps)
+            let interval = Duration.nanoseconds(1_000_000_000 / max(1, fps))
+            let spent = clock.now - started
+            let behind = frozen == nil && spent > interval
+            if displayBehind != behind { displayBehind = behind }
+            do { try await clock.sleep(until: max(started + interval, clock.now + .milliseconds(1))) }
+            catch { return }
+        }
     }
 
     private func refreshFlags() async {
         guard let run = bench.current else { return }
-        guard let content = try? await bench.timelineLoad(for: .init(runID: run.id, tool: .review, frozen: nil)),
+        guard let content = try? await bench.timelineLoad(for: .init(runID: run.id, tool: .review, frozen: nil), waveform: false),
               !Task.isCancelled, bench.current?.id == run.id else { return }
         flagTimes = content.entries.compactMap { item in
             guard item.state == .placed, let position = item.position else { return nil }
             return RunTimeline.time(of: position, in: content.reader.run)
+        }
+        pendingFlagTimes = content.entries.filter { $0.state == .pending }.compactMap {
+            $0.position.flatMap { RunTimeline.time(of: $0, in: content.reader.run) }
         }
         let segment = content.reader.run.segments.last?.id
         pendingFlag = content.entries.compactMap { item in
@@ -390,7 +526,11 @@ struct LiveWaveformPane: View {
                 let binEnd = live.manualTimeUpper ?? end
                 let origin = binEnd - Double(live.waveformBins.count) * live.waveformBinSeconds
                 var gaps: [StreamSelection] = []
-                for (index, bin) in live.waveformBins.enumerated() {
+                let step = live.waveformBinSeconds
+                let startIndex = max(0, min(live.waveformBins.count, Int(floor((range.lower - origin) / step))))
+                let endIndex = max(startIndex, min(live.waveformBins.count, Int(ceil((range.upper - origin) / step))))
+                for index in startIndex..<endIndex {
+                    let bin = live.waveformBins[index]
                     let lower = origin + Double(index) * live.waveformBinSeconds
                     let upper = min(end, lower + live.waveformBinSeconds)
                     accumulator.add(bin, lower: lower, upper: upper)
@@ -463,7 +603,7 @@ struct LiveWaveformPane: View {
 #if STREAM_TESTING
 extension LiveWaveformPane {
     static func pausedForLayout(bench: StreamingBench, capture: LiveWaveformCapture) -> Self {
-        var pane = Self(bench: bench, addFlag: {}, addNote: {})
+        var pane = Self(bench: bench, addNote: {})
         pane._paused = State(initialValue: capture)
         pane._window = State(initialValue: .custom)
         return pane

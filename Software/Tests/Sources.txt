@@ -11,6 +11,7 @@ ProfileReview
 MainNoiseAnalysis
 StreamProject
 StreamWire
+StreamStartupDelay
 StreamStudio
 StudioReview
 ReviewStorage
@@ -29,6 +30,7 @@ WaveformOverview
 PostRunAnalysis
 StudioRangeReview
 ReviewWorker
+AIWaveformEvidence
 ReviewSpectra
 RunTimeline
 LiveFlagHistory
@@ -55,3 +57,10 @@ CalibratedPrerun
 AcquisitionBoard
 ProjectArchive
 RunPlayback
+RunBatchArchive
+MainsHumTest
+PicoCardImport
+UnoSignalHealth
+UnoCandidates
+UnoCandidateAnalysis
+UnoAveragingReplay

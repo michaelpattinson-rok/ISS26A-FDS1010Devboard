@@ -14,7 +14,7 @@ struct ProjectOverviewPane: View {
                 HStack {
                     Text("Standard Rev E.1 wiring").font(.title2.weight(.semibold))
                     StudioHelp(title: "Standard wiring", detail: "Remove USB power before wiring or changing J4.",
-                               assets: bench.board == .unoR4 ? ["DualBoardWiring", "SetupWiringBoard"] : ["SetupWiringBoard", "SetupPicoPhoto"], illustration: false)
+                               assets: bench.board == .unoR4 ? ["UnoWiring", "SetupWiringBoard"] : ["SetupWiringBoard", "SetupPicoPhoto"], illustration: false)
                 }
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: 16) {
@@ -38,7 +38,7 @@ struct ProjectOverviewPane: View {
     private var setupPhotos: some View {
         HStack(alignment: .top, spacing: 12) {
             setupPhoto("SetupWiringBoard", label: "Rev E.1 J2")
-            setupPhoto(bench.board == .unoR4 ? "DualBoardWiring" : "SetupPicoPhoto", label: bench.board.title)
+            setupPhoto(bench.board == .unoR4 ? "UnoWiring" : "SetupPicoPhoto", label: bench.board.title)
         }
     }
 
@@ -89,7 +89,7 @@ struct ProjectSettingsPane: View {
     private var savedRaw: String {
         let bytes = bench.runs.compactMap(\.run).reduce(UInt64(0)) { total, run in
             let readings = run.segments.reduce(UInt64(0)) { $0 + $1.savedSamples }
-            return total + readings * UInt64(PicoAverage.stride(run.settings.picoAveraging))
+            return total + readings * UInt64(PicoAverage.stride(run.settings.picoAveraging, board: run.settings.board))
         }
         return ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
     }
@@ -110,6 +110,12 @@ struct ProjectSettingsPane: View {
 
             Divider()
             Stepper("Main duration  \(value.minutes) min", value: $value.minutes, in: 1...120)
+            Stepper("Startup Delay  \(value.startupDelay) s", value: Binding(
+                get: { value.startupDelay },
+                set: { value.startupDelaySeconds = $0 }
+            ), in: StreamStartupDelay.supported)
+            Text("The device samples during this delay. The recording timer starts when Signal Bench begins saving waveform data.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Picker("Default exclusions", selection: $value.noise) {
                 ForEach(NoisePolicy.allCases) { Text($0.rawValue).tag($0) }
             }

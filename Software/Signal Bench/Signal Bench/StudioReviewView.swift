@@ -196,6 +196,10 @@ struct StudioReviewView: View {
                             .id(rangePanelID)
                         StudioLocalAI(settings: bench.localAI, bench: bench, reader: reader, selection: selection,
                                       openSample: { sampleInspection = $0 }, didStage: refreshProposals)
+                        if reader.run.settings.unoCandidates != nil {
+                            UnoCandidateStudio(bench: bench, reader: reader, selection: selection,
+                                               openSample: { sampleInspection = $0 }, didSave: didSave)
+                        }
                         proposals
                     case .filters: filters
                     case .exclusions: exclusions
@@ -203,6 +207,10 @@ struct StudioReviewView: View {
                     case .fixture:
                         FixtureStudyPanel(bench: bench, reader: reader, selection: selection, baseline: settings,
                                           saved: fixtureReport, openSample: openSample, didSave: didSave)
+                        if reader.run.settings.board == .unoR4, reader.run.settings.bench?.step == .fixture {
+                            UnoCandidateStudio(bench: bench, reader: reader, selection: selection,
+                                               openSample: { sampleInspection = $0 }, didSave: didSave)
+                        }
                     }
                 }.padding(16)
             }
@@ -761,12 +769,12 @@ struct ReviewTrace: View {
                     ZStack {
                         if let rawDots, !rawDots.values.isEmpty {
                             MetalWaveformLayer(renderer: renderer, dots: rawDots, range: axis,
-                                onPreparing: { rawMetal = false }, onPresented: { rawMetal = true },
+                                onPreparing: { rawMetal = false }, onPresented: { _, _ in rawMetal = true },
                                 onFailure: { metalFailed = true }, customTint: .init(0.5, 0.5, 0.5, 0.8))
                         }
                         if let filteredDots, !filteredDots.values.isEmpty {
                             MetalWaveformLayer(renderer: renderer, dots: filteredDots, range: axis,
-                                onPreparing: { filteredMetal = false }, onPresented: { filteredMetal = true },
+                                onPreparing: { filteredMetal = false }, onPresented: { _, _ in filteredMetal = true },
                                 onFailure: { metalFailed = true })
                         }
                     }

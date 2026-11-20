@@ -15,7 +15,11 @@ case "$mode" in
   curve) suite=""; flag=CURVE_TESTING ;;
   project-zip) suite="$tests/ProjectArchiveChecks.swift"; flag=UNO_CHECKS ;;
   playback) suite="$tests/RunPlaybackChecks.swift"; flag=UNO_CHECKS ;;
-  *) printf '%s\n' 'Use uno, prerun, curve, project-zip or playback.' >&2; exit 2 ;;
+  pico-card) suite="$tests/PicoCardChecks.swift"; flag=UNO_CHECKS ;;
+  mains-hum) suite="$tests/MainsHumChecks.swift"; flag=UNO_CHECKS ;;
+  run-zip) suite="$tests/RunBatchArchiveChecks.swift"; flag=UNO_CHECKS ;;
+
+  *) printf '%s\n' 'Use uno, prerun, curve, project-zip, playback, run-zip, mains-hum or pico-card.' >&2; exit 2 ;;
 esac
 mkdir -p "$output/tmp"
 directory=$(mktemp -d "$output/run.XXXXXXXX")

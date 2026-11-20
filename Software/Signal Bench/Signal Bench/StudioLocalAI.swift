@@ -16,6 +16,7 @@ struct StudioLocalAI: View {
     @State private var jobDrafts: [ReviewJobDraft] = []
     @State private var locations: [StreamMatchLocation] = []
     @State private var reviewRunning = false
+    @State private var toolReplies = 0
     @State private var staged: Set<UUID> = []
     @State private var reviewDraft: [ProjectJob] = []
     @State private var showJobApproval = false
@@ -29,6 +30,7 @@ struct StudioLocalAI: View {
     }
     nonisolated private struct Outcome: Sendable {
         var answer: Answer?
+        var toolReplies = 0
         var analyzedRanges: [StreamSelection] = []
         var proposals: [ReviewProposal] = []
         var jobDrafts: [ReviewJobDraft] = []
@@ -36,7 +38,7 @@ struct StudioLocalAI: View {
     }
     nonisolated private struct ToolResult: Decodable {
         struct Result: Decodable {
-            struct Finding: Decodable { let location: StreamMatchLocation?; let pulse: ReviewPulse? }
+            struct Finding: Decodable { let location: StreamMatchLocation?; let pulse: ReviewPulse?; let range: ReviewRange? }
             struct FixtureDecision: Decodable { let segment: UUID; let peakIndex: UInt64 }
             let decisions: [FixtureDecision]?
             let findings: [Finding]?
@@ -65,7 +67,7 @@ struct StudioLocalAI: View {
                         Button("Local AI Settings") { openSettings() }
                     }
                 } else {
-                    Text(settings.enabled ? "Check the connection and select a model in Settings." : "Enable Local AI in Settings to review this run.")
+                    Text(settings.enabled ? "Select a model and test tool calling in Settings." : "Enable Local AI in Settings to review this run.")
                         .foregroundStyle(.secondary)
                     Button("Open Settings") { openSettings() }
                 }
@@ -75,7 +77,8 @@ struct StudioLocalAI: View {
                         Text("Analyzed · \(rangeLabel(range))").font(.caption).foregroundStyle(.secondary)
                     }
                     Text(answer.text).textSelection(.enabled)
-                    Text(answer.model).font(.caption).foregroundStyle(.secondary)
+                    Text(toolReplies == 0 ? "No successful tool replies. This answer has no verified data." :
+                         "\(answer.model) · \(toolReplies) tool replies").font(.caption).foregroundStyle(.secondary)
                 }
                 ForEach(Array(locations.enumerated()), id: \.offset) { _, location in
                     Button("Inspect sample \(location.sample.formatted()) · \(location.segment.uuidString.prefix(8))") {
@@ -106,7 +109,9 @@ struct StudioLocalAI: View {
             }
         }
         .onChange(of: bench.operation) { _, operation in if operation == nil { reviewRunning = false } }
+        .onChange(of: settings.ready) { _, ready in if !ready && reviewRunning { bench.cancelWork() } }
         .onChange(of: settings.enabled) { _, enabled in if !enabled && reviewRunning { bench.cancelWork() } }
+        .onChange(of: settings.allowImages) { _, allowed in if !allowed && reviewRunning { bench.cancelWork() } }
     }
 
     private func rangeLabel(_ range: StreamSelection) -> String {
@@ -115,9 +120,11 @@ struct StudioLocalAI: View {
     }
 
     private func start() {
-        let endpoint = settings.endpoint, model = settings.model, question = prompt
+        let endpoint = settings.endpoint, model = settings.model, reasoning = settings.reasoning, question = prompt
         let input = reader, range = selection, whole = fullRun
+        let images = settings.allowImages
         answer = nil
+        toolReplies = 0
         analyzedRanges = []
         proposals = []
         jobDrafts = []
@@ -127,8 +134,8 @@ struct StudioLocalAI: View {
             let client = try LMStudioClient(endpoint)
             defer { client.session.invalidateAndCancel() }
             var outcome = Outcome()
-            try await client.review(worker: .init(store: input.store), model: model, prompt: question,
-                                    run: input.run.id, selection: range, fullRun: whole) { kind, item in
+            try await client.review(worker: .init(store: input.store), model: model, reasoning: reasoning, prompt: question,
+                                    run: input.run.id, selection: range, fullRun: whole, images: images) { kind, item in
                 let data = try StreamFiles.encoder.encode(item)
                 switch kind {
                 case "agent_answer":
@@ -139,12 +146,14 @@ struct StudioLocalAI: View {
                     let proposal = try StreamFiles.decoder.decode(ReviewProposal.self, from: data)
                     if proposal.run == input.run.id { outcome.proposals.append(proposal) }
                 case "tool_result":
+                    outcome.toolReplies += 1
                     if let result = try? StreamFiles.decoder.decode(ToolResult.self, from: data), result.request.run == input.run.id {
                         if let selection = result.result.selection, !outcome.analyzedRanges.contains(selection) {
                             outcome.analyzedRanges.append(selection)
                         }
                         let findings = (result.result.findings ?? []).compactMap { item in
                             item.location ?? item.pulse.map { StreamMatchLocation(segment: $0.range.segment, sample: $0.peakIndex) }
+                                ?? item.range.map { StreamMatchLocation(segment: $0.segment, sample: $0.first) }
                         }
                         let fixture = (result.result.decisions ?? []).map { StreamMatchLocation(segment: $0.segment, sample: $0.peakIndex) }
                         for location in findings + fixture where outcome.locations.count < 24 {
@@ -158,7 +167,9 @@ struct StudioLocalAI: View {
             }
             return outcome
         } completion: { outcome in
+            guard bench.project?.identity.id == input.store.identity.id else { return }
             answer = outcome.answer
+            toolReplies = outcome.toolReplies
             analyzedRanges = outcome.analyzedRanges
             proposals = outcome.proposals
             jobDrafts = outcome.jobDrafts

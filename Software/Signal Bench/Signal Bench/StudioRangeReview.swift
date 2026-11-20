@@ -37,6 +37,7 @@ nonisolated struct StudioRangeConfig: Codable, Equatable, Sendable {
     let exclusions: [ReviewInterval]
     let profileRevision: UUID?
     var comparisonContext: ReviewSettings? = nil
+    var contextLimit: StreamSelection? = nil
 }
 
 nonisolated struct StudioRangeDecision: Codable, Identifiable, Sendable {
@@ -90,7 +91,11 @@ nonisolated enum StudioRangeReview {
         let halo = max(Int((rates.max() ?? Double(requested)) * 0.4), support)
         let collector = pairedSpectra ? ReviewSpectrumCollector(comparing: referenceSettings != nil) : nil
         let context = Double(tileSize + halo + 2) / (rates.min() ?? Double(requested))
-        let expanded = StreamSelection(lower: max(0, selection.lower - context), upper: min(duration, selection.upper + context))
+        let expanded = StreamSelection(lower: max(config.contextLimit?.lower ?? 0, selection.lower - context),
+                                       upper: min(config.contextLimit?.upper ?? duration, duration, selection.upper + context))
+        guard expanded.valid, expanded.lower <= selection.lower, expanded.upper >= selection.upper - 1e-7 else {
+            throw ReviewWorkerError.invalid("The analysis is outside its approved filter context.")
+        }
         var output = StudioRangeResult(config: config, trace: .init(selection: selection, settings: config.settings, rate: requested))
         let firstMinute = Int(selection.lower / 60), lastMinute = Int(ceil(selection.upper / 60)) - 1
         var quality = MinuteAccumulator(first: firstMinute, board: reader.run.settings.board)

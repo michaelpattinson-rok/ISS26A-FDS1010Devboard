@@ -2,8 +2,9 @@ import Darwin
 import Foundation
 
 nonisolated struct LiveStreamPreview: Sendable {
-    var columns: [ClosedRange<UInt16>?] = []
+    var columns: [ClosedRange<UInt16>?] { waveformBins.map { $0.gap ? nil : $0.range } }
     var elapsed: Double = 0
+    var settlingRemaining: Double?
     var received: UInt64 = 0
     var saved: UInt64 = 0
     var committedBoundary: UInt64 = 0
@@ -14,6 +15,14 @@ nonisolated struct LiveStreamPreview: Sendable {
     var lowRail: UInt64 = 0
     var highRail: UInt64 = 0
     var gpio: StreamGPIO?
+    var healthEnabled = false
+    var health: UnoSignalHealth?
+    var healthReports: UInt64 = 0
+    var healthOpportunities: UInt64 = 0
+    var rejectedHealthReports: UInt64 = 0
+    var healthReceipt: ContinuousClock.Instant?
+    var hostQueuePeak = 0
+    var maximumWriterUS: UInt64 = 0
     var baseline: Double?
     var noise: Double?
     var baselineChange: Double?
@@ -21,13 +30,13 @@ nonisolated struct LiveStreamPreview: Sendable {
     var manualTimeUpper: Double?
     var latestCode: UInt16?
     var latestAverage: ADCAveraging.Group?
-    var waveformFaults: [Bool] = []
     var waveformBins: [LiveWaveformBin] = []
     var waveformSamples: [WaveformSample] = []
     var waveformBinSeconds = 0.005
     var waveformOverview: LiveWaveformOverview?
     var waveformSegmentStart = 0.0
     var waveformBoundary: Double?
+    var waveformRevision: UInt64 = 0
 
     mutating func accountQuality(_ frame: StreamFrame, board: AcquisitionBoard) {
         var clippedReadings = 0
@@ -192,7 +201,7 @@ nonisolated struct ManualLiveWindow {
         bins[slot] = bin
     }
 
-    func snapshot() -> (columns: [ClosedRange<UInt16>?], upper: Double, faults: [Bool], bins: [LiveWaveformBin])? {
+    func snapshot() -> (upper: Double, bins: [LiveWaveformBin])? {
         guard end > 0 else { return nil }
         let last = (end - 1) / samplesPerBin
         let count = UInt64(Self.capacity)
@@ -201,17 +210,19 @@ nonisolated struct ManualLiveWindow {
             let bin = bins[Int(index % count)]
             return bin?.index == index ? bin?.summary ?? .init(gap: true) : .init(gap: true)
         }
-        return (summaries.map { $0.gap ? nil : $0.range }, Double(last + 1) * binSeconds,
-                summaries.map { $0.errors > 0 }, summaries)
+        return (Double(last + 1) * binSeconds, summaries)
     }
 }
 
 nonisolated enum StreamRecorderEvent: Sendable {
     case streamCapabilities(averaging: Bool)
+    case deviceCandidates(Bool)
+    case sdCapabilities(mask: UInt32, state: String?)
     case connecting
     case connected(streaming: Bool, firmware: String, pending: Bool, rates: Set<Int>, diagnosticChannels: Set<Int>, customRates: Bool)
     case disconnected(String)
     case started(StreamRun)
+    case durationChanged(StreamRun)
     case preview(LiveStreamPreview)
     case stopping(String)
     case finished(StreamRun?, issue: String?)
@@ -221,6 +232,9 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
     private let queue = DispatchQueue(label: "SignalBench.stream.transport", qos: .userInitiated, autoreleaseFrequency: .workItem)
     private let disk = DispatchQueue(label: "SignalBench.stream.writer", qos: .userInitiated, autoreleaseFrequency: .workItem)
     private let allowBenchmark: Bool
+    #if STREAM_TESTING
+    var sampleWriterDelayForTest: TimeInterval = 0
+    #endif
     private let event: @Sendable (StreamRecorderEvent) -> Void
     private var fd: Int32 = -1
     private var portGeneration = UUID()
@@ -236,6 +250,8 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
     private var negotiatedCustomRates = false
     private var negotiatedAveraging = false
     private var negotiatedTiming = false
+    private var negotiatedHealth = false
+    private var negotiatedCandidates = false
     private var handshakeAt: UInt64 = 0
     private var headerText = Data()
     private var output: [Data] = []
@@ -251,7 +267,6 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
             if !shown {
                 self.active?.preview.waveformOverview = nil
                 self.active?.preview.waveformBins = []
-                self.active?.preview.columns = []
                 self.active?.preview.waveformSamples = []
             }
         }
@@ -263,9 +278,16 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
     private final class Active: @unchecked Sendable {
         let id: UUID
         let writer: StreamRunWriter
-        let duration: Double
-        let slots = DispatchSemaphore(value: 12)
+        var duration: Double
+        var changingDuration = false
+        var committingDuration = false
+        // At maximum rate a normal Uno or Pico raw block arrives about every 4 ms.
+        // Keep about half a second of normal frames for filesystem latency spikes.
+        // The parser caps each frame payload and Stop never waits for a slot.
+        static let writerFrameLimit = 128
+        let slots = DispatchSemaphore(value: writerFrameLimit)
         let metricsLock = NSLock()
+        let candidateSlots = DispatchSemaphore(value: 4)
         var queued = 0
         var queuePeak = 0
         var maxWriterUS: UInt64 = 0
@@ -275,6 +297,8 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
         var preview = LiveStreamPreview()
         var manualWindow: ManualLiveWindow?
         var startedAt: UInt64?
+        var loggingAt: UInt64?
+        var startup: StreamStartupDelay
         var lastSampleAt: UInt64?
         var discardIncoming = false
         var deferredRelease: StreamFrame?
@@ -283,6 +307,7 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
         var deadlineReached = false
         var pingAt: UInt64
         var publishAt: UInt64
+        var waveformPublishAt: UInt64
         var parserFailed = false
         var finishing = false
         var flagHistory: LiveFlagHistory?
@@ -290,17 +315,20 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
         var diskPublishedSamples: UInt64 = 0
         var run: StreamRun
 
-        init(_ writer: StreamRunWriter, stream: UInt64, now: UInt64, timing: Bool) {
+        init(_ writer: StreamRunWriter, stream: UInt64, now: UInt64, timing: Bool, health: Bool) {
             self.writer = writer
             duration = writer.segmentDuration
             run = writer.run
             id = run.id
             let settings = run.settings
-            accounting = .init(stream: stream, channel: settings.channel, rate: settings.nominalRate, averaging: settings.picoAveraging, board: settings.board)
-            parser = .init(allowsPacked: settings.board == .unoR4 ? settings.nominalRate >= 250_000 : StreamWire.requiresPacking(settings.nominalRate), averaging: settings.picoAveraging, timing: timing, board: settings.board)
+            startup = .init(seconds: settings.startupDelaySeconds ?? 0)
+            preview.healthEnabled = health
+            accounting = .init(stream: stream, channel: settings.channel, rate: settings.nominalRate, averaging: settings.picoAveraging, board: settings.board, health: health, candidates: settings.unoCandidates != nil)
+            parser = .init(allowsPacked: settings.board == .unoR4 ? settings.nominalRate >= 250_000 : StreamWire.requiresPacking(settings.nominalRate), averaging: settings.picoAveraging, timing: timing, board: settings.board, health: health, candidates: settings.unoCandidates != nil)
             requestAt = now
             pingAt = now
             publishAt = now
+            waveformPublishAt = now
         }
     }
 
@@ -374,16 +402,19 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
                 self.event(.finished(run, issue: "The connected board does not match this run."))
                 return
             }
-            let bench = settings.benchSampling == true || (self.allowBenchmark && settings.purpose == "rateBenchmark")
             guard settings.picoAveraging == nil || self.negotiatedAveraging else {
-                self.event(.finished(run, issue: "This average requires Pico firmware with AVG1 support. Choose 1× or connect firmware 1.10."))
+                self.event(.finished(run, issue: "The connected firmware does not provide on-device averaging. Choose 1× or update the firmware."))
+                return
+            }
+            guard settings.unoCandidates == nil || self.negotiatedCandidates else {
+                self.event(.finished(run, issue: "This firmware does not support Device Candidates. Record raw or update the Uno."))
                 return
             }
             let legacyBench = self.discoveredFirmware == "1.7-bench"
             guard self.negotiatedRates.contains(settings.nominalRate) ||
-                  (self.negotiatedCustomRates && StreamWire.customRates.contains(settings.nominalRate)),
+                  (self.negotiatedCustomRates && settings.board.liveRange.contains(settings.nominalRate)),
                   self.negotiatedChannels.contains(settings.channel),
-                  settings.board.standardRate(settings.nominalRate, channel: settings.channel) || bench,
+                  settings.board.liveRange.contains(settings.nominalRate),
                   !legacyBench || (settings.channel == 0 && settings.mode.wireMode == "RAW") else {
                 self.event(.finished(run, issue: "This rate or channel is unavailable for the recording mode."))
                 return
@@ -399,7 +430,8 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
                     self.openingRun = false
                     switch candidate {
                     case .success(let writer):
-                        let active = Active(writer, stream: token, now: self.now, timing: self.negotiatedTiming)
+                        let active = Active(writer, stream: token, now: self.now, timing: self.negotiatedTiming,
+                                            health: self.negotiatedHealth && run.settings.mode == .diagnosis && run.settings.unoCandidates == nil)
                         self.active = active
                         if self.stopWhileOpening {
                             self.finish(active, issue: "Stopped before recording started.")
@@ -411,16 +443,97 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
                         }
                         let settings = run.settings
                         let packing: String
-                        if settings.board == .unoR4 { packing = settings.nominalRate >= 250_000 ? " PACK14" : " RAW14" }
+                        if settings.board == .unoR4 {
+                            if let averaging = settings.picoAveraging { packing = " AVG14 \(averaging.count)" }
+                            else { packing = settings.nominalRate >= 250_000 ? " PACK14" : " RAW14" }
+                        }
                         else if let averaging = settings.picoAveraging { packing = " AVG1 \(averaging.count)" }
                         else {
                             packing = (StreamWire.requiresPacking(settings.nominalRate) ? " PACK12" : "") +
                                 (self.negotiatedTiming ? " METRICS" : "")
                         }
-                        let command = "SB1 STREAM \(String(format: "%016llx", token)) \(settings.channel) \(settings.mode.wireMode) \(settings.nominalRate)\(packing)\n"
+                        let health = settings.unoCandidates?.trailer ?? (active.preview.healthEnabled ? " HEALTH1" : "")
+                        let command = "SB1 STREAM \(String(format: "%016llx", token)) \(settings.channel) \(settings.mode.wireMode) \(settings.nominalRate)\(packing)\(health)\n"
                         self.enqueue(Data(command.utf8))
                     case .failure(let error):
                         self.event(.finished(run, issue: error.localizedDescription))
+                    }
+                }
+            }
+        }
+    }
+
+    func changeDuration(run id: UUID, to target: Double, finishIfElapsed: Bool,
+                        completion: @escaping @Sendable (String?) -> Void) {
+        queue.async {
+            guard let active = self.active, active.id == id, active.startedAt != nil,
+                  active.stopAt == nil, !active.finishing, !active.changingDuration,
+                  active.run.settings.allowsLiveDurationEdit, (1...StreamWire.maxDuration).contains(target) else {
+                completion("The recording no longer accepts a duration change.")
+                return
+            }
+            let settings = active.run.settings
+            let segment = active.run.segments.last!
+            let elapsed = segment.timelineStart + (active.loggingAt.map { Double(self.now - $0) / 1e9 } ?? 0)
+            let extensionCheck = target > settings.duration
+            if target == settings.duration { completion(nil); return }
+            active.changingDuration = true
+            self.disk.async {
+                let capacity = Result {
+                    if extensionCheck {
+                        try active.writer.store.verify()
+                        try RecordingEstimate.requireSpace(for: settings, seconds: target - elapsed, in: active.writer.store.folder)
+                    }
+                }
+                self.queue.async {
+                    guard self.active === active, active.stopAt == nil, !active.finishing else {
+                        active.changingDuration = false
+                        completion("Recording is already finishing.")
+                        return
+                    }
+                    if case .failure(let issue) = capacity {
+                        active.changingDuration = false
+                        completion(issue.localizedDescription)
+                        return
+                    }
+                    let elapsed = segment.timelineStart + (active.loggingAt.map { Double(self.now - $0) / 1e9 } ?? 0)
+                    guard active.loggingAt == nil || elapsed < settings.duration else {
+                        active.changingDuration = false
+                        active.deadlineReached = true
+                        self.requestStop(active, issue: nil)
+                        completion("The current target has already elapsed.")
+                        return
+                    }
+                    guard target > elapsed || finishIfElapsed else {
+                        active.changingDuration = false
+                        completion("That target has elapsed. Confirm that you want to finish the recording.")
+                        return
+                    }
+                    let change = StreamRun.DurationChange(changed: Date(), segment: segment.id, elapsed: elapsed,
+                                                          previous: settings.duration, target: target)
+                    let previous = active.duration
+                    active.duration = max(0, target - segment.timelineStart)
+                    active.committingDuration = true
+                    self.disk.async {
+                        let recorded = Result { try active.writer.changeDuration(change) }
+                        self.queue.async {
+                            active.changingDuration = false
+                            active.committingDuration = false
+                            switch recorded {
+                            case .success(let run):
+                                if self.active === active {
+                                    active.run = run
+                                    self.event(.durationChanged(run))
+                                }
+                                completion(nil)
+                            case .failure(let error):
+                                if self.active === active {
+                                    active.duration = previous
+                                    self.requestStop(active, issue: "Could not save the duration change. " + error.localizedDescription)
+                                }
+                                completion(error.localizedDescription)
+                            }
+                        }
                     }
                 }
             }
@@ -475,7 +588,7 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
 
     func pin(_ pin: Int, operation: UInt8) {
         queue.async {
-            guard let run = self.active, run.startedAt != nil, run.stopAt == nil,
+            guard let run = self.active, run.loggingAt != nil, run.stopAt == nil,
                   run.preview.gpio?.leaseActive == true, run.run.settings.mode == .manual, (0..<29).contains(pin),
                   run.run.settings.board.gpioMask & (UInt32(1) << pin) != 0, (3...5).contains(operation) else { return }
             self.enqueue(StreamWire.control(operation, stream: run.accounting.stream, pin: UInt8(pin)))
@@ -526,6 +639,8 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
         negotiatedCustomRates = false
         negotiatedAveraging = false
         negotiatedTiming = false
+        negotiatedHealth = false
+        negotiatedCandidates = false
         negotiatedChannels = []
         output = []
         outputOffset = 0
@@ -573,13 +688,13 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
             }
             return
         }
-        if let started = active.startedAt {
+        if active.startedAt != nil {
             if let lastSample = active.lastSampleAt, now - lastSample >= 2_000_000_000 {
                 disconnectAfterFinish = true
                 requestStop(active, issue: "The device stopped sending samples. Reconnect to continue in a new segment.")
                 return
             }
-            if Double(now - started) / 1e9 >= active.duration {
+            if !active.committingDuration, let logging = active.loggingAt, Double(now - logging) / 1e9 >= active.duration {
                 active.deadlineReached = true
                 requestStop(active, issue: nil)
                 return
@@ -643,13 +758,15 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
                 identityBoot = boot
                 streaming = advertisesStream && (dictionary["bench_rates"] != "1" || allowBenchmark)
                 if let rates = dictionary["rates"], let channels = dictionary["diag_channels"] {
-                    negotiatedRates = Set(rates.split(separator: ",").compactMap { Int($0) }).intersection(board.benchRates)
+                    negotiatedRates = Set(rates.split(separator: ",").compactMap { Int($0) }).filter { board.liveRange.contains($0) }
                     // Maximum rate requires the negotiated packed USB path.
                     // Earlier builds stay usable at their lower rates.
                     if board == .picoW && dictionary["pack12"] != "1" {
                         negotiatedRates = negotiatedRates.filter { !StreamWire.requiresPacking($0) }
                     }
-                    negotiatedCustomRates = board == .picoW && dictionary["pack12"] == "1" && dictionary["custom_rates"] == "10000-500000"
+                    negotiatedCustomRates = board == .picoW
+                        ? dictionary["pack12"] == "1" && dictionary["custom_rates"] == "10000-500000"
+                        : dictionary["uno_range"] == "10000-250000"
                     negotiatedChannels = Set(channels.split(separator: ",").compactMap { Int($0) }).intersection([0, 1, 2])
                     streaming = streaming && !negotiatedRates.isEmpty && negotiatedChannels.contains(0)
                 } else if board == .unoR4 || dictionary["rates"] != nil || dictionary["diag_channels"] != nil || firmware == "1.8" || firmware.hasPrefix("1.8.") {
@@ -661,14 +778,22 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
                 }
                 // Consume the STATUS line emitted immediately after HELLO
                 // before exposing the device as ready for binary negotiation.
+                negotiatedCandidates = board == .unoR4 && dictionary["pulse"] == "1"
+                negotiatedHealth = board == .unoR4 && dictionary["health"] == "1"
                 negotiatedTiming = board == .picoW && dictionary["stream_timing"] == "1"
-                negotiatedAveraging = negotiatedTiming && dictionary["avg_stream"] == "1"
+                negotiatedAveraging = board == .picoW
+                    ? negotiatedTiming && dictionary["avg_stream"] == "1"
+                    : dictionary["avg14"] == "1" && dictionary["uno_range"] == "10000-250000"
+                negotiatedSDMask = dictionary["sd_record"] == "1"
+                    ? (dictionary["reserved_gpio"].flatMap { UInt32($0, radix: 16) } ?? 0x003f0000) | 0x003f0000 : 0
                 discoveredFirmware = firmware
             } else if line.hasPrefix("SB1 STATUS "), let firmware = discoveredFirmware {
                 let fields = SBRecordAssembler.fields(line.split(whereSeparator: \.isWhitespace).dropFirst(2))
                 guard let pending = fields["pending"] else { lost("The device status is missing its pending-record state."); return }
                 connected = true
                 streaming = streaming && (pending == "-" || pending == "0")
+                event(.sdCapabilities(mask: negotiatedSDMask, state: fields["sd_state"]))
+                event(.deviceCandidates(streaming && negotiatedCandidates))
                 event(.streamCapabilities(averaging: streaming && negotiatedAveraging))
                 event(.connected(streaming: streaming, firmware: firmware, pending: pending != "-" && pending != "0",
                                  rates: streaming ? negotiatedRates : [], diagnosticChannels: streaming ? negotiatedChannels : [],
@@ -677,28 +802,82 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
             }
         }
     }
+    private var negotiatedSDMask: UInt32 = 0
     private var discoveredFirmware: String?
 
-    private func consume(_ frame: StreamFrame, active: Active) throws {
+    private func consume(_ wireFrame: StreamFrame, active: Active) throws {
+        let frame = wireFrame
+        if frame.kind == .candidates && (frame.boot != identityBoot || frame.stream != active.accounting.stream) { return }
         guard frame.boot == identityBoot else { throw StreamFailure.protocolError("The device boot identity changed.") }
+        let previousCandidate = active.accounting.candidateBlock?.first
         try active.accounting.accept(frame)
+        if frame.kind == .candidates {
+            guard !active.discardIncoming, previousCandidate != active.accounting.candidateBlock?.first,
+                  let block = active.accounting.candidateBlock?.droppingPrefix(active.startup.cutoff),
+                  active.loggingAt != nil else { return }
+            let writerIdleEnough = active.metricsLock.withLock { active.queued < 4 }
+            guard writerIdleEnough, active.candidateSlots.wait(timeout: .now()) == .success else { return }
+            disk.async {
+                defer { active.candidateSlots.signal() }
+                guard active.diskError == nil else { return }
+                active.writer.appendCandidates(block)
+            }
+            return
+        }
+        if frame.kind == .health {
+            guard active.loggingAt != nil else { return }
+            if active.preview.healthReports != active.accounting.healthReports { active.preview.healthReceipt = .now }
+            active.preview.health = active.accounting.health
+            active.preview.healthReports = active.accounting.healthReports
+            active.preview.rejectedHealthReports = active.accounting.rejectedHealthReports
+            return
+        }
         if frame.kind == .start {
             active.preview.configuredRate = active.accounting.configuredRate
             if let rate = active.accounting.configuredRate {
+                active.startup.configure(rate: rate, candidates: active.run.settings.unoCandidates != nil)
                 let window = ManualLiveWindow(configuredRate: rate)
                 active.manualWindow = window
-                active.flagHistory = .init(rate: rate, averaging: active.run.settings.picoAveraging)
+                active.flagHistory = .init(rate: rate, averaging: active.run.settings.picoAveraging, board: active.run.settings.board)
                 active.preview.waveformBinSeconds = window.binSeconds
             }
             active.startedAt = now
+            if active.startup.seconds == 0 { active.loggingAt = active.startedAt }
+            else {
+                active.preview.settlingRemaining = Double(active.startup.seconds)
+                event(.preview(active.preview))
+            }
             active.lastSampleAt = active.startedAt
             if active.stopAt == nil { event(.started(active.run)) }
         }
         if frame.kind == .end {
-            active.preview.loss = active.accounting.knownLoss
+            active.preview.loss = active.startup.savedAccounting(active.accounting, logged: active.loggingAt != nil).knownLoss
             event(.preview(active.preview))
             finish(active, issue: active.issue)
             return
+        }
+        let startupCheckpoint: StreamStartupEvidence?
+        if wireFrame.kind == .samples {
+            active.lastSampleAt = now
+            if active.loggingAt == nil, active.stopAt != nil { return }
+        }
+        guard let frame = active.startup.retain(wireFrame, board: active.run.settings.board,
+                                                averaging: active.run.settings.picoAveraging) else {
+            if let rate = active.accounting.configuredRate {
+                active.preview.settlingRemaining = Double(active.startup.cutoff - active.accounting.nextIndex) / rate
+                if now - active.publishAt >= previewInterval {
+                    active.publishAt = now
+                    event(.preview(active.preview))
+                }
+            }
+            return
+        }
+        if frame.kind == .samples, active.loggingAt == nil {
+            active.loggingAt = now
+            active.preview.settlingRemaining = nil
+            startupCheckpoint = active.startup.evidence(active.accounting, logged: true)
+        } else {
+            startupCheckpoint = nil
         }
         if frame.kind == .gpio {
             guard active.run.settings.mode == .manual else { throw StreamFailure.protocolError("Unexpected GPIO frame.") }
@@ -709,16 +888,19 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
                                         latches: StreamWire.read(UInt32.self, frame.payload, at: 8),
                                         leaseActive: StreamWire.read(UInt32.self, frame.payload, at: 12) == 1)
         }
+        var waveformUpdated = false
         if frame.kind == .samples {
             let receivedAt = now
-            active.lastSampleAt = receivedAt
+            active.preview.healthOpportunities = active.accounting.healthOpportunities
             active.flagHistory?.append(first: frame.index, at: receivedAt, words: frame.payload)
-            let shouldPublish = now - active.publishAt >= previewInterval
+            let shouldPublish = now - active.waveformPublishAt >= previewInterval
             let board = active.run.settings.board
             let words = showViewer || shouldPublish ? frame.words : []
             active.preview.accountQuality(frame, board: board)
             if showViewer { active.manualWindow?.append(words, at: frame.index, groups: frame.groups, board: board) }
             if shouldPublish {
+                active.waveformPublishAt = now
+                waveformUpdated = true
                 active.preview.latestAverage = frame.groups?.last ?? active.run.settings.adcAveraging?.latest(in: words, at: frame.index)
                 do {
                     let last = active.preview.baseline
@@ -733,9 +915,8 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
                     active.preview.baselineChange = baseline.flatMap { value in last.map { value - $0 } }
                 }
                 if showViewer, let timeline = active.manualWindow?.snapshot(), let rate = active.accounting.configuredRate {
-                    active.preview.columns = timeline.columns
                     active.preview.manualTimeUpper = timeline.upper
-                    active.preview.waveformFaults = timeline.faults
+                    active.preview.waveformRevision &+= 1
                     active.preview.waveformBins = timeline.bins
                     active.preview.waveformOverview = active.manualWindow?.overview
                     let segmentStart = active.run.segments.last?.timelineStart ?? 0
@@ -751,16 +932,21 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
                 }
             }
         }
-        active.preview.elapsed = active.startedAt.map { Double(now - $0) / 1e9 } ?? 0
-        active.preview.received = active.accounting.received
-        active.preview.loss = active.accounting.knownLoss
+        active.preview.elapsed = active.loggingAt.map { Double(now - $0) / 1e9 } ?? 0
+        let savedAccounting = active.startup.savedAccounting(active.accounting, logged: active.loggingAt != nil)
+        active.preview.received = savedAccounting.received
+        active.preview.loss = savedAccounting.knownLoss
         active.preview.rateByPicoTimer = active.accounting.sampleCadenceEstimate
         if frame.kind == .samples, let cadence = active.preview.rateByPicoTimer, active.stopAt == nil,
            let configured = active.accounting.configuredRate, abs(cadence - configured) > configured / 100 {
             requestStop(active, issue: "The measured sample cadence differs from the configured rate. The saved prefix is available.")
         }
-        if now - active.publishAt >= previewInterval || frame.kind == .gpio {
+        if waveformUpdated || now - active.publishAt >= previewInterval || frame.kind == .gpio || startupCheckpoint != nil {
             active.publishAt = now
+            active.metricsLock.withLock {
+                active.preview.hostQueuePeak = active.queuePeak
+                active.preview.maximumWriterUS = active.maxWriterUS
+            }
             event(.preview(active.preview))
         }
         let isRelease = frame.kind == .gpio && active.preview.gpio?.leaseActive == false
@@ -771,7 +957,7 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
         guard active.slots.wait(timeout: .now()) == .success else {
             if isRelease { active.deferredRelease = frame }
             active.discardIncoming = true
-            requestStop(active, issue: "Disk writer fell behind. The committed prefix is available.")
+            requestStop(active, issue: "The Mac storage queue filled. The verified saved prefix is available.")
             return
         }
         active.metricsLock.withLock {
@@ -790,6 +976,12 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
             }
             guard active.diskError == nil else { return }
             do {
+                #if STREAM_TESTING
+                if frame.kind == .samples && self.sampleWriterDelayForTest > 0 {
+                    Thread.sleep(forTimeInterval: self.sampleWriterDelayForTest)
+                }
+                #endif
+                if let startupCheckpoint { try active.writer.noteStartup(startupCheckpoint) }
                 try active.writer.append(frame)
                 let saved = active.writer.run.segments.last?.savedSamples ?? 0
                 if saved != active.diskPublishedSamples {
@@ -838,11 +1030,17 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
         guard !active.finishing else { return }
         active.finishing = true
         event(.stopping("Saving received samples"))
-        let state = active.accounting
+        let logged = active.loggingAt != nil
+        let state = active.startup.savedAccounting(active.accounting, logged: logged)
+        let startupEvidence = active.startup.evidence(active.accounting, logged: logged)
         let releaseEvidence = active.deferredRelease
         let deadlineReached = active.deadlineReached
+        let startingRun = active.run
         disk.async {
             var problem = active.diskError.map { "Storage error: " + $0 } ?? issue
+            if problem == nil, !logged, startupEvidence != nil {
+                problem = "Stopped during startup delay. No waveform samples were saved."
+            }
             var run: StreamRun?
             if let releaseEvidence, active.diskError == nil {
                 do { try active.writer.append(releaseEvidence) }
@@ -855,13 +1053,13 @@ nonisolated final class StreamRecorder: @unchecked Sendable {
                     final.maximumWriterUS = active.maxWriterUS
                 }
                 run = try active.writer.finish(accounting: final, issue: problem, discardUncommitted: active.diskError != nil,
-                                                     deadlineReached: deadlineReached)
+                                                     deadlineReached: deadlineReached, startup: startupEvidence)
             } catch {
                 problem = problem ?? "Storage error: " + error.localizedDescription
                 run = try? active.writer.store.openRun(active.id)
             }
             if run == nil {
-                var interrupted = active.run
+                var interrupted = startingRun
                 interrupted.status = .interrupted
                 interrupted.message = problem
                 interrupted.segments[interrupted.segments.count - 1].unknown = true

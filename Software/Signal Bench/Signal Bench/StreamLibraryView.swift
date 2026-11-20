@@ -13,6 +13,9 @@ struct StreamLibrary: View {
     @State private var showingList = true
     @State private var showProjectReview = false
     @State private var showBatchExport = false
+    @State private var selectedIDs: Set<UUID> = []
+    @State private var archiveRequest: RunBatchExportRequest?
+    @State private var pendingArchive: (RunBatchExportRequest, String)?
     @State private var reviewRuns: [StreamRun] = []
     @State private var sampleJump: LibrarySampleJump?
 
@@ -52,7 +55,19 @@ struct StreamLibrary: View {
                 }
             }
         }
-        .onAppear { showingList = bench.selection == nil }
+        .onAppear {
+            showingList = bench.selection == nil
+            selectedIDs = Set(entries.filter { $0.id == bench.selection }.map(\.id))
+        }
+        .onChange(of: bench.selection) { _, id in
+            if bench.diagnosisSource?.run != id { bench.diagnosisSource = nil }
+            if let id, selectedIDs.contains(id) { return }
+            selectedIDs = Set(entries.filter { $0.id == id }.map(\.id))
+        }
+        .onChange(of: entries.map(\.id)) { _, ids in
+            let visible = selectedIDs.intersection(ids)
+            if visible != selectedIDs { select(visible) }
+        }
         .onChange(of: bench.exclusionJob?.id) { _, id in
             if id != nil { showingList = false }
         }
@@ -62,6 +77,11 @@ struct StreamLibrary: View {
 
         .onChange(of: bench.renamePrompt, initial: true) { _, requested in
             if requested && bench.selectedRun != nil { showRename = true; bench.renamePrompt = false }
+        }
+        .sheet(item: $bench.picoCardRequest) { request in
+            PicoCardImportSheet(request: request) { entries, wiring, date in
+                bench.importPicoCard(request, entries: entries, wiring: wiring, date: date)
+            }
         }
         .sheet(isPresented: $showRename) {
             if let run = bench.selectedRun {
@@ -81,6 +101,13 @@ struct StreamLibrary: View {
                 }
             }
         }
+        .sheet(item: $archiveRequest, onDismiss: {
+            guard let (request, name) = pendingArchive else { return }
+            pendingArchive = nil
+            bench.exportSelectedRuns(request.runs.map(\.id), projectID: request.projectID, name: name)
+        }) { request in
+            RunBatchExportSheet(request: request) { pendingArchive = (request, $0) }
+        }
         .confirmationDialog("Export matching runs?", isPresented: $showBatchExport) {
             Button("Full Run ZIPs…") { bench.queueLibraryExports(exportableRuns, format: .zip) }
             Button("Original Binary ZIPs…") { bench.queueLibraryExports(exportableRuns, format: .binaryZIP) }
@@ -99,8 +126,16 @@ struct StreamLibrary: View {
             HStack {
                 Text("Run Library").font(.title2.weight(.semibold))
                 Spacer()
-                Button("Export Matching Runs", systemImage: "square.and.arrow.up.on.square") { showBatchExport = true }
-                    .labelStyle(.iconOnly).help("Export matching runs").disabled(bench.busy || exportableRuns.isEmpty)
+                Button("Import Pico Card…", systemImage: "sdcard") { bench.choosePicoCard() }
+                    .labelStyle(.iconOnly).help("Import Pico Card…").disabled(bench.busy || bench.needsProjectAccess)
+                Menu {
+                    Button("Export Selected Runs as ZIP…", action: requestBatchExport).disabled(!canExportSelection)
+                    Button("Export Matching Runs Separately…") { showBatchExport = true }
+                        .disabled(bench.busy || exportableRuns.isEmpty)
+                } label: {
+                    Label("Run Export Options", systemImage: "square.and.arrow.up.on.square")
+                }
+                .labelStyle(.iconOnly).menuIndicator(.hidden).help("Run export options")
                 Button("Show Exports in Finder", systemImage: "folder") { bench.showExports() }
                     .labelStyle(.iconOnly).help("Show Exports in Finder").disabled(bench.busy)
             }
@@ -138,7 +173,7 @@ struct StreamLibrary: View {
                                        description: Text(unfiltered ? "Start a recording to add it to this Project." : "Change the search or filters."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(entries, selection: $bench.selection) { item in
+                List(entries, selection: Binding(get: { selectedIDs }, set: select)) { item in
                     VStack(alignment: .leading, spacing: 3) {
                         Text(item.run?.name ?? "Unreadable run").font(.body.weight(.medium)).lineLimit(1)
                         if let run = item.run {
@@ -154,15 +189,28 @@ struct StreamLibrary: View {
                     }
                     .padding(.vertical, 4)
                     .tag(item.id)
-                    .onTapGesture(count: 2) { bench.selection = item.id; showingList = false }
+                    .onTapGesture(count: 2) { select([item.id]); showingList = false }
                     .contextMenu {
-                        Button("Open in Studio") { bench.selection = item.id; showingList = false }
+                        Button("Open in Studio") { select([item.id]); showingList = false }
+                        if selectedIDs.contains(item.id), selectedIDs.count > 1 {
+                            Button("Export Selected Runs as ZIP…", action: requestBatchExport).disabled(!canExportSelection)
+                        }
                         if let run = item.run, eligibleForReview(run) {
                             Button("Review with Local AI…") { openProjectReview([run]) }.disabled(bench.busy)
                         }
                         Button("View in Finder", systemImage: "folder") { bench.revealRun(item.id) }
                     }
                 }.listStyle(.inset)
+                HStack {
+                    Text(selectedIDs.isEmpty ? "⌘ click to select runs" : "\(selectedIDs.count) selected")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityLabel(selectedIDs.isEmpty ? "Hold Command and click to select multiple runs" : "\(selectedIDs.count) runs selected")
+                    Spacer()
+                    Button("Export ZIP…", action: requestBatchExport)
+                        .disabled(!canExportSelection)
+                        .accessibilityLabel("Export selected runs as ZIP")
+                        .help(selectionHelp)
+                }
                 if narrow {
                     Button("Open Selected Run") { showingList = false }
                         .keyboardShortcut(.defaultAction)
@@ -171,6 +219,33 @@ struct StreamLibrary: View {
                 }
             }
         }.padding(16)
+    }
+
+    private var selectedItems: [StreamRunItem] {
+        entries.filter { selectedIDs.contains($0.id) }
+    }
+
+    private var canExportSelection: Bool {
+        !bench.busy && bench.project != nil && !selectedItems.isEmpty &&
+            selectedItems.allSatisfy { $0.run.map(RunBatchArchive.canExport) == true }
+    }
+
+    private var selectionHelp: String {
+        if bench.busy { return "Finish the current activity to export runs." }
+        if selectedIDs.isEmpty { return "Hold Command and click to select multiple runs." }
+        if !canExportSelection { return "Select saved runs with readable data." }
+        return "Save the selected runs together in one ZIP."
+    }
+
+    private func select(_ ids: Set<UUID>) {
+        selectedIDs = ids
+        if let id = bench.selection, ids.contains(id) { return }
+        bench.selection = entries.first { ids.contains($0.id) }?.id
+    }
+
+    private func requestBatchExport() {
+        guard canExportSelection, let project = bench.project else { return }
+        archiveRequest = .init(projectID: project.identity.id, runs: selectedItems.compactMap(\.run))
     }
 
     private var exportableRuns: [StreamRun] {
@@ -189,7 +264,8 @@ struct StreamLibrary: View {
     @ViewBuilder private var detail: some View {
         if let project = bench.project, let run = bench.selectedRun {
             RunWorkspaceView(bench: bench, reader: .init(store: project, run: run),
-                             rename: { showRename = true }, resume: { showResume = true }, sampleJump: sampleJump)
+                             rename: { showRename = true }, resume: { showResume = true }, sampleJump: sampleJump,
+                             initialRange: bench.diagnosisSource.flatMap { $0.run == run.id ? $0.range : nil })
                 .id(run.id)
         } else if let id = bench.selection, let item = bench.runs.first(where: { $0.id == id }) {
             ContentUnavailableView("Could not open this run", systemImage: "exclamationmark.triangle",
@@ -223,6 +299,7 @@ struct StreamStudioView: View {
     @State private var rangeReader: StreamRangeReader?
     @State private var selectRange = false
     @State private var cursors: [WaveformSample] = []
+    @State private var selectedFlagID: UUID?
     @State private var cursorWork: Task<Void, Never>?
     @State private var cursorIssue: String?
     @State private var qualityMinute = 0
@@ -280,6 +357,14 @@ struct StreamStudioView: View {
                                 Text("The raw samples are in a recoverable Project draft.").foregroundStyle(.secondary)
                             } else {
                                 Text(reader.run.description).foregroundStyle(.secondary).textSelection(.enabled)
+                                if let card = reader.run.picoCardOrigin {
+                                    Text("Pico Card · " + card.input.rawValue)
+                                        .font(.callout).foregroundStyle(.secondary)
+                                    Text(card.approximateStart.map {
+                                        "Approximate start " + $0.formatted(date: .abbreviated, time: .shortened)
+                                    } ?? "Recording date unknown")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                }
                             }
                         }
                         Spacer()
@@ -288,13 +373,13 @@ struct StreamStudioView: View {
                                 Button("Edit Run Details…", action: rename)
                                 Button("Export…") { exportName = reader.run.name; showExport = true }
                                     .disabled(duration <= 0)
-                                if reader.run.status == .interrupted {
+                                if reader.run.status == .interrupted, reader.run.settings.mainsHum == nil, reader.run.picoCardOrigin == nil {
                                     Button("Continue Recording…", action: resume)
                                         .disabled(!bench.canStart || !canResume)
                                 }
                                 Button("Storage…", systemImage: "externaldrive") { showStorage = true }
                                     .disabled(recoveredSampleCount == 0)
-                                Button("Flags & Notes…", systemImage: "flag") { bench.openRunTimeline(reader.run.id) }
+                                Button("Flag Manager…", systemImage: "flag") { bench.openRunTimeline(reader.run.id) }
                                 Button("View in Finder", systemImage: "folder") { bench.revealRun(reader.run.id) }
                             }.fixedSize().disabled(bench.busy)
                         }
@@ -585,6 +670,17 @@ struct StreamStudioView: View {
                           systemImage: "exclamationmark.triangle")
                         .font(.caption).foregroundStyle(.orange)
                 }
+                if let changes = reader.run.durationChanges {
+                    DisclosureGroup("Duration Changes") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Original target: \(reader.run.initialDuration.formatted()) s")
+                            Text("Final target: \(reader.run.settings.duration.formatted()) s")
+                            ForEach(Array(changes.enumerated()), id: \.offset) { _, change in
+                                Text("At \(change.elapsed.formatted(.number.precision(.fractionLength(1)))) s · \(change.previous.formatted()) s to \(change.target.formatted()) s")
+                            }
+                        }.font(.caption).foregroundStyle(.secondary).padding(.top, 4)
+                    }
+                }
                 if !reader.run.segments.isEmpty {
                     DisclosureGroup("Sample timing and coverage") {
                         VStack(alignment: .leading, spacing: 7) {
@@ -596,6 +692,10 @@ struct StreamStudioView: View {
                                         Text("Measured cadence \(cadence.formatted(.number.precision(.fractionLength(0...2)))) samples/s")
                                     }
                                     let configured = segment.configuredRate(reader.run.settings.nominalRate)
+                                    if let startup = segment.startup {
+                                        let seconds = Double(startup.originalReadingOffset) / configured
+                                        Text("Startup excluded · \(seconds.formatted(.number.precision(.fractionLength(0...3)))) s · \(startup.discardedReadings.formatted()) received readings skipped")
+                                    }
                                     let nominalSeconds = Double(segment.savedSamples) / configured
                                     let raw = segment.rawConfiguredRate(reader.run.settings.nominalRate)
                                     Text("ADC configured \(raw.formatted(.number.precision(.fractionLength(0...2)))) samples/s")
@@ -634,7 +734,7 @@ struct StreamStudioView: View {
                         Text(recoveredSampleCount > 0 ? "\(recoveredSampleCount.formatted()) saved samples in this run." : "No raw samples have been recovered yet.")
                             .font(.callout).foregroundStyle(.secondary)
                         Spacer(minLength: 6)
-                        if canResume {
+                        if canResume, reader.run.settings.mainsHum == nil, reader.run.picoCardOrigin == nil {
                             Button("Continue in New Segment…", action: resume).disabled(!bench.canStart)
                         }
                     }
@@ -643,7 +743,7 @@ struct StreamStudioView: View {
                     } else if reader.run.hasCadenceMismatch {
                         Text("Start a new run to record at the correct cadence.").font(.caption).foregroundStyle(.secondary)
                     } else if !canResume && !bench.rateAvailable(reader.run.settings.nominalRate, channel: reader.run.settings.channel, averaging: reader.run.settings.picoAveraging) {
-                        Text("Connect the run’s original device type, channel and rate. Enable Bench Rates for a bench recording.").font(.caption).foregroundStyle(.secondary)
+                        Text("Connect the run’s original device type, channel and rate.").font(.caption).foregroundStyle(.secondary)
                     } else if canResume && reader.run.settings.mode == .calibrated {
                         Text("Continuing starts with a fresh dark prerun.").font(.caption).foregroundStyle(.secondary)
                     }
@@ -658,10 +758,29 @@ struct StreamStudioView: View {
         }
     }
 
-    private var flagTimes: [Double] {
-        (annotations?.flags.compactMap(flagTime) ?? []) + timelineEntries.filter { $0.state == .placed }.compactMap { entry in
-            entry.position.flatMap { RunTimeline.time(of: $0, in: reader.run) }
+    private struct WaveformFlag: Identifiable {
+        let id: UUID
+        let label: String
+        let seconds: Double
+    }
+
+    private var waveformFlags: [WaveformFlag] {
+        let legacy = annotations?.flags.compactMap { flag in
+            flagTime(flag).map { WaveformFlag(id: flag.id, label: flag.description, seconds: $0) }
+        } ?? []
+        let placed = timelineEntries.filter { $0.state == .placed }.compactMap { entry in
+            entry.position.flatMap { RunTimeline.time(of: $0, in: reader.run) }.map {
+                WaveformFlag(id: entry.id, label: entry.label, seconds: $0)
+            }
         }
+        return (legacy + placed).sorted { ($0.seconds, $0.id.uuidString) < ($1.seconds, $1.id.uuidString) }
+    }
+
+    private var flagTimes: [Double] { waveformFlags.map(\.seconds) }
+
+    private func jumpToFlag(_ flag: WaveformFlag) {
+        selectedFlagID = flag.id
+        jump(flag.seconds, width: min(duration, 0.1))
     }
 
     private var timelineSection: some View {
@@ -670,13 +789,13 @@ struct StreamStudioView: View {
                 ForEach(timelineEntries.prefix(50)) { entry in
                     if entry.state == .placed, let position = entry.position, let time = RunTimeline.time(of: position, in: reader.run) {
                         Button(entry.label + " · " + time.formatted(.number.precision(.fractionLength(0...6))) + " s") {
-                            jump(time, width: 0.05)
+                            jumpToFlag(.init(id: entry.id, label: entry.label, seconds: time))
                         }.buttonStyle(.link)
                     } else {
                         Text(entry.label.isEmpty ? entry.note : entry.label).lineLimit(2)
                     }
                 }
-                Button("Review Flags & Notes…") { bench.openRunTimeline(reader.run.id) }
+                Button("Flag Manager…") { bench.openRunTimeline(reader.run.id) }
             }.padding(.top, 6)
         }
     }
@@ -731,7 +850,7 @@ struct StreamStudioView: View {
                 Button("Discard Draft…", role: .destructive) { confirmDiscard = true }
                     .disabled(bench.busy || bench.needsProjectAccess)
                 Spacer()
-                Button("Flags & Notes…", systemImage: "flag") { bench.openRunTimeline(reader.run.id) }
+                Button("Flag Manager…", systemImage: "flag") { bench.openRunTimeline(reader.run.id) }
                     .disabled(bench.timelineSaving)
                 Button("Save to Library…") { showSaveDraft = true }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
@@ -876,7 +995,7 @@ struct StreamStudioView: View {
             let sampleEstimate = fullRun ? recoveredSampleCount : plot?.stats.samples ?? 0
             if sampleEstimate > 0 {
                 let bytes = Int64(format.estimatedBytes(samples: sampleEstimate, averaging: reader.run.settings.adcAveraging,
-                                                            pico: reader.run.settings.picoAveraging, hasExclusions: !(annotations?.masks.isEmpty ?? true)))
+                                                            pico: reader.run.settings.picoAveraging, hasExclusions: !(annotations?.masks.isEmpty ?? true), board: reader.run.settings.board))
                 Text("Before compression: \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))")
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
@@ -972,7 +1091,13 @@ struct StreamStudioView: View {
         lastSampleJump = sampleJump.id
         let time = segment.timelineStart + Double(sampleJump.location.sample) / segment.configuredRate(reader.run.settings.nominalRate)
         guard time < duration else { return }
-        jump(time, width: min(duration, 0.025))
+        if let endSample = sampleJump.endSample, endSample > sampleJump.location.sample {
+            let end = segment.timelineStart + Double(endSample) / segment.configuredRate(reader.run.settings.nominalRate)
+            let width = min(duration - time, end - time)
+            jump(time + width / 2, width: width)
+        } else {
+            jump(time, width: min(duration, 0.025))
+        }
         cursorWork?.cancel()
         let location = sampleJump.location
         cursorWork = Task {
@@ -1022,9 +1147,9 @@ struct StreamStudioView: View {
             if content.1 == nil { studioError = "A saved analysis could not be read. Its files remain in the run folder." }
             lower = 0
             upper = overview == nil ? min(duration, 2) : duration
-            if openAnalysisOnLoad, let requestedRangeOnLoad, requestedRangeOnLoad.valid, requestedRangeOnLoad.upper <= duration {
+            if let requestedRangeOnLoad, requestedRangeOnLoad.valid, requestedRangeOnLoad.upper <= duration + 1e-7 {
                 lower = requestedRangeOnLoad.lower
-                upper = requestedRangeOnLoad.upper
+                upper = min(duration, requestedRangeOnLoad.upper)
             }
             if sampleJump?.id != lastSampleJump, sampleJump?.run == reader.run.id { openRequestedSample() }
             else { requestPlot() }
@@ -1270,7 +1395,7 @@ struct StreamStudioView: View {
         chart.samples = plot.samples
         chart.style = bench.waveformStyle
         chart.fullScale = bench.waveformScale == .full
-        chart.cursorTimes = cursors.map(\.time)
+        chart.cursorTimes = cursors.map(\.time) + waveformFlags.filter { $0.id == selectedFlagID }.map(\.seconds)
         if selectRange { chart.picked = { first, end in selectSamples(first, end) } }
         chart.navigate = { anchor, amount in navigate(anchor, amount) }
         chart.cursor = { time in pinCursor(time) }
@@ -1279,24 +1404,36 @@ struct StreamStudioView: View {
 
     private var waveformJumps: some View {
         let visibleEnd = plottedRange.lower <= 0 && plottedRange.upper >= duration ? 0 : plottedRange.upper
-        let flag = flagTimes.sorted().first { $0 >= visibleEnd }
+        let flags = waveformFlags
+        let selected = flags.firstIndex { $0.id == selectedFlagID }
+        let next = selected.flatMap { flags.indices.contains($0 + 1) ? flags[$0 + 1] : nil }
+            ?? (selected == nil ? flags.first { $0.seconds >= visibleEnd } : nil)
+        let prior = selected.flatMap { $0 > 0 ? flags[$0 - 1] : nil }
+            ?? (selected == nil ? flags.last { $0.seconds < plottedRange.lower } : nil)
         let gaps = overview?.gaps ?? plot?.gaps ?? []
         let gap = gaps.first { $0.lower >= visibleEnd }
         let clipped = overview?.tiles.first {
             $0.clipped > 0 && Double($0.bucket) * WaveformOverview.tileSeconds >= visibleEnd
         }
-        return HStack {
-            Button("Next Flag") { if let flag { jump(flag, width: min(duration, 0.1)) } }.disabled(flag == nil)
-            Button("Next Gap") {
-                if let gap { jump(gap.lower, width: min(duration, 0.25)) }
-            }.disabled(gap == nil)
-            Button("Next Clipping") {
-                if let clipped {
-                    let step = WaveformOverview.tileSeconds
-                    jump((Double(clipped.bucket) + 0.5) * step, width: min(duration, step * 2))
-                }
-            }.disabled(clipped == nil)
-                .help(overview == nil ? "Render Waveform to index clipping across this run." : "Jump to the next overview interval containing rail hits.")
+        return VStack(alignment: .leading, spacing: 6) {
+            if let selected {
+                Text("\(flags[selected].label) · \(flags[selected].seconds.formatted(.number.precision(.fractionLength(0...6)))) s")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                Button("Previous Flag") { if let prior { jumpToFlag(prior) } }.disabled(prior == nil)
+                Button("Next Flag") { if let next { jumpToFlag(next) } }.disabled(next == nil)
+                Button("Next Gap") {
+                    if let gap { jump(gap.lower, width: min(duration, 0.25)) }
+                }.disabled(gap == nil)
+                Button("Next Clipping") {
+                    if let clipped {
+                        let step = WaveformOverview.tileSeconds
+                        jump((Double(clipped.bucket) + 0.5) * step, width: min(duration, step * 2))
+                    }
+                }.disabled(clipped == nil)
+                    .help(overview == nil ? "Render Waveform to index clipping across this run." : "Jump to the next overview interval containing rail hits.")
+            }
         }.font(.callout)
     }
 
@@ -1323,7 +1460,7 @@ struct StreamStudioView: View {
             reviewRange = plottedRange
             reviewSheet = true
         }.disabled(bench.busy || !displayedSelectionReady)
-        Button("Flags & Notes…", systemImage: "flag") { bench.openRunTimeline(reader.run.id) }
+        Button("Flag Manager…", systemImage: "flag") { bench.openRunTimeline(reader.run.id) }
             .disabled(bench.busy || bench.timelineSaving)
         Button("Export…", systemImage: "square.and.arrow.up") {
             exportName = reader.run.name
@@ -1459,7 +1596,7 @@ struct StreamStudioView: View {
             Button("Retry Post Processing") { bench.retryPostRun(reader.run.id) }
         } else if let progress = bench.qualityProgress[reader.run.id] {
             HStack {
-                ProgressView(progress < 1 ? "Preparing quality summary" : "Finishing post processing", value: progress)
+                ProgressView(progress.fraction < 1 ? "Preparing quality summary" : "Finishing post processing", value: progress.fraction)
                 Button("Pause Processing") { bench.pausePostRun(reader.run.id) }
             }.controlSize(.small)
         } else if bench.qualityPaused.contains(reader.run.id) || (overview == nil && recoveredSampleCount > 0) {

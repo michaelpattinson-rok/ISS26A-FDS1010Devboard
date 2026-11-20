@@ -56,7 +56,8 @@ nonisolated struct ReviewWorkerSettings: Codable, Sendable {
         value.maskGlitches = maskGlitches ?? false
         value.maskNoise = maskNoise ?? false
         value.height = height ?? value.height
-        guard value.valid else { throw ReviewWorkerError.invalid("Invalid filter or pulse settings.") }
+        guard height.map({ (1...Double(run.settings.board.maxCode)).contains($0) }) ?? true,
+              value.valid else { throw ReviewWorkerError.invalid("Invalid filter or pulse settings.") }
         return value
     }
 }
@@ -72,6 +73,7 @@ nonisolated struct ReviewRequest: Codable, Sendable {
         case list_runs, metadata, flags, quality, waveform, preview, compare, pulse_decisions, fixture_templates, fixture_replay
         case read_review_guide, batch_quality, batch_compare
         case interruption, find_clipping, find_gaps, spectra, export_estimate, draft_jobs
+        case waveform_overview, waveform_image, device_candidates, averaging_replay
 
         var batchOnly: Bool { self == .read_review_guide || self == .batch_quality || self == .batch_compare }
     }
@@ -152,7 +154,7 @@ nonisolated extension ReviewRequest.Operation {
         case .list_runs, .fixture_templates, .read_review_guide, .batch_quality: return []
         case .batch_compare: return ["runs", "settings", "reference"]
         case .draft_jobs: return ["jobKind"]
-        case .waveform: return ["run", "range"]
+        case .waveform, .waveform_overview, .waveform_image, .device_candidates, .averaging_replay: return ["run", "range"]
         case .compare: return ["run", "settings", "reference"]
         case .fixture_replay: return ["run", "template", "weighted"]
         default: return ["run"]
@@ -167,7 +169,8 @@ nonisolated extension ReviewRequest.Operation {
         case .metadata: return ["run"]
         case .flags: return ["run", "offset", "limit"]
         case .quality: return ["run", "range", "offset", "limit"]
-        case .waveform: return required
+        case .waveform, .waveform_overview, .waveform_image: return required
+        case .device_candidates, .averaging_replay: return required + ["offset", "limit"]
         case .preview, .pulse_decisions: return ["run", "range", "settings", "offset", "limit"]
         case .compare: return required + ["range", "offset", "limit"]
         case .fixture_replay: return required + ["offset", "limit"]
@@ -213,6 +216,7 @@ nonisolated struct ReviewProposal: Codable, Identifiable, Sendable {
               config.settings.valid, reference?.valid ?? true else { throw ReviewWorkerError.stale }
         let validated = try ReviewRequest.decode(StreamFiles.encoder.encode(request), saved: true)
         guard try ReviewWorker.selection(validated, reader: reader) == config.selection,
+              config.contextLimit == nil || config.contextLimit == validated.visibleSelection,
               try (validated.settings ?? ReviewWorkerSettings()).resolved(current) == config.settings,
               try validated.reference?.resolved(current) == reference else { throw ReviewWorkerError.stale }
     }
@@ -290,7 +294,7 @@ nonisolated struct ReviewProposal: Codable, Identifiable, Sendable {
             pairedSpectra: true, referenceSettings: reference, change: emit)
         let baseline = try reference.map { settings in
             let cfg = StudioRangeConfig(selection: config.selection, settings: settings,
-                annotationRevision: config.annotationRevision, exclusions: config.exclusions, profileRevision: config.profileRevision)
+                annotationRevision: config.annotationRevision, exclusions: config.exclusions, profileRevision: config.profileRevision, contextLimit: config.contextLimit)
             return try StudioRangeReview.analyze(input, config: cfg, expectedSourceHash: sourceHash, contextSettings: config.settings)
         }
         try checkCurrent(reader)
@@ -332,6 +336,8 @@ nonisolated struct ReviewWorker {
     private struct Comparison: Encodable {
         let selection: StreamSelection
         let sourceHash: String
+        let evidence = "Fresh Verified Scan"
+        let contextLimited: Bool
         let primary: Totals
         let reference: Totals?
         let changedDecisions: Int
@@ -359,6 +365,9 @@ nonisolated struct ReviewWorker {
         let usableSeconds: Double
         let knownMissingSeconds: Double
         let unknownGaps: Int
+        let baselineNoiseCodes: Double?
+        let clips: UInt64
+        let errors: UInt64
         let excluded: UInt64
         let settling: UInt64
         let rawMatches: UInt64
@@ -371,6 +380,9 @@ nonisolated struct ReviewWorker {
             usableSeconds = value.minutes.reduce(0) { $0 + $1.usableSeconds }
             knownMissingSeconds = value.minutes.reduce(0) { $0 + $1.knownMissingSeconds }
             unknownGaps = value.gaps.filter { $0.end == nil }.count
+            baselineNoiseCodes = ProfileAnalyzer.median(value.minutes.compactMap(\.noise))
+            clips = value.minutes.reduce(0) { $0 + $1.clips }
+            errors = value.minutes.reduce(0) { $0 + $1.errors }
             excluded = value.excluded
             settling = value.settling
             rawMatches = value.rawMatches
@@ -444,7 +456,53 @@ nonisolated struct ReviewWorker {
         guard let id = request.run else { throw ReviewWorkerError.invalid("A run ID is required.") }
         let input = try reader(id)
         switch request.operation {
-        case .metadata: return input.run
+        case .metadata:
+            if request.visibleSelection != nil {
+                struct ScopedMetadata: Encodable {
+                    let id: UUID
+                    let mode: RecordingMode
+                    let rate: Int
+                    let selection: StreamSelection
+                    let board: AcquisitionBoard
+                    let adcBits: Int
+                    let adcMaximum: UInt16
+                    let channel: Int
+                    let averagingFactor: Int
+                    let selectedSegments: [Segment]
+                    let moreSegments: Bool
+                    let evidence = "Recorded Metadata"
+
+                    struct Segment: Encodable {
+                        let id: UUID
+                        let firmware: String?
+                        let timelineStart: Double
+                        let configuredRawRate: Double
+                        let recordedRate: Double
+                    }
+                }
+                let settings = input.run.settings
+                let prepared = try input.prepared()
+                let selected = try Self.selection(request, reader: prepared)
+                let ends = (prepared.index ?? []).reduce(into: [UUID: UInt64]()) { result, chunk in
+                    result[chunk.segment] = max(result[chunk.segment, default: 0], chunk.end)
+                }
+                let segments = input.run.segments.filter { segment in
+                    guard request.range.map({ $0.segment == segment.id }) ?? true else { return false }
+                    let end = ends[segment.id, default: 0]
+                    let last = max(segment.accountedSamples, end)
+                    let bounds = ReviewInput.indices(selected, segment: segment, rate: settings.nominalRate)
+                    return last > bounds.lowerBound && bounds.upperBound > 0
+                }
+                return ScopedMetadata(id: id, mode: settings.mode, rate: settings.nominalRate,
+                    selection: selected, board: settings.board, adcBits: settings.board.bits, adcMaximum: settings.board.maxCode,
+                    channel: settings.channel, averagingFactor: settings.factor,
+                    selectedSegments: segments.prefix(16).map { segment in
+                        .init(id: segment.id, firmware: segment.firmware, timelineStart: segment.timelineStart,
+                              configuredRawRate: segment.rawConfiguredRate(settings.nominalRate),
+                              recordedRate: segment.configuredRate(settings.nominalRate))
+                    }, moreSegments: segments.count > 16)
+            }
+            return input.run
         case .interruption: return try ProjectReviewTools.interruption(input, request: request)
         case .find_clipping, .find_gaps:
             return try ProjectReviewTools.qualitySearch(input, request: request, clipping: request.operation == .find_clipping)
@@ -456,7 +514,8 @@ nonisolated struct ReviewWorker {
             return draft
         case .flags:
             let values = try RunTimeline.entries(input, finished: true, resolving: false).filter { entry in
-                guard let scope = request.visibleSelection, let position = entry.position else { return true }
+                guard let scope = request.visibleSelection else { return true }
+                guard let position = entry.position else { return false }
                 guard let time = RunTimeline.time(of: position, in: input.run) else { return false }
                 return time >= scope.lower && time < scope.upper
             }
@@ -492,6 +551,23 @@ nonisolated struct ReviewWorker {
             markMissing(until: range.end)
             struct Snippet: Encodable { let ranges: [Span]; let gaps: [Missing] }
             return Snippet(ranges: records, gaps: gaps)
+        case .waveform_overview, .waveform_image, .device_candidates, .averaging_replay:
+            let reader = try input.prepared()
+            guard let range = request.range else { throw ReviewWorkerError.invalid("Choose a sample range.") }
+            let selection = try Self.selection(request, reader: reader)
+            switch request.operation {
+            case .waveform_image, .waveform_overview:
+                let evidence = try AIWaveformEvidence.make(reader, range: range, selection: selection)
+                if request.operation == .waveform_image {
+                    try output("waveform_image", evidence.png())
+                    return evidence.imageSummary
+                }
+                return evidence
+            case .device_candidates:
+                return try UnoCandidateAnalysis.review(reader, range: range, selection: selection, page: request.page)
+            default:
+                return try UnoAveragingReplay.review(reader, range: range, selection: selection, page: request.page)
+            }
         case .fixture_replay:
             guard let templateID = request.template, let weighted = request.weighted,
                   let template = try FixtureTemplateStudy.templates(store).first(where: { $0.id == templateID }) else {
@@ -536,7 +612,8 @@ nonisolated struct ReviewWorker {
         let selection = try Self.selection(request, reader: reader)
         let settings = try (request.settings ?? ReviewWorkerSettings()).resolved(reader.run)
         let reference = try request.reference?.resolved(reader.run)
-        let config = try StudioRangeReview.config(reader, selection: selection, settings: settings)
+        var config = try StudioRangeReview.config(reader, selection: selection, settings: settings)
+        config.contextLimit = request.visibleSelection
         let fullPulseReview = request.operation != .quality && request.operation != .spectra
         var digest = SHA256()
         var page: [Finding] = []
@@ -567,7 +644,7 @@ nonisolated struct ReviewWorker {
         let hash = digest.finalize().map { String(format: "%02x", $0) }.joined()
         let peer = try reference.map { settings in
             let cfg = StudioRangeConfig(selection: selection, settings: settings, annotationRevision: config.annotationRevision,
-                                        exclusions: config.exclusions, profileRevision: config.profileRevision)
+                                        exclusions: config.exclusions, profileRevision: config.profileRevision, contextLimit: config.contextLimit)
             return try StudioRangeReview.analyze(reader, config: cfg, expectedSourceHash: hash,
                 contextSettings: config.settings, source: { _ in try checkpoint() },
                 decision: { try output("reference_decision", $0) },
@@ -605,7 +682,7 @@ nonisolated struct ReviewWorker {
                 raw120: spectrum.bandPower(spectrum.raw, around: 120), processed120: spectrum.bandPower(spectrum.processed, around: 120),
                 reference120: spectrum.reference.flatMap { spectrum.bandPower($0, around: 120) })
         }
-        return Comparison(selection: selection, sourceHash: hash, primary: Totals(primary.quality), reference: peer.map { Totals($0.quality) },
+        return Comparison(selection: selection, sourceHash: hash, contextLimited: config.contextLimit != nil, primary: Totals(primary.quality), reference: peer.map { Totals($0.quality) },
             changedDecisions: changes, spectra: spectra, findings: page, pageOffset: request.page.lowerBound, itemsAvailable: count)
     }
 }

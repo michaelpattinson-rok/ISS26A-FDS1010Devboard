@@ -142,7 +142,7 @@ nonisolated struct CurveInspection: Sendable {
                 while cursor < sourceFrames.count, sourceFrames[cursor].first + UInt64(sourceFrames[cursor].count) <= index { cursor += 1 }
                 guard cursor < sourceFrames.count, sourceFrames[cursor].first <= index else { throw CurveCodec.fault }
                 let slice = sourceFrames[cursor]
-                let offset = slice.byteOffset + Int(index - slice.first) * PicoAverage.stride(summary.picoAveraging)
+                let offset = slice.byteOffset + Int(index - slice.first) * PicoAverage.stride(summary.picoAveraging, board: summary.board)
                 original = try input.withUnsafeBytes { try CurveCodec.reading($0, at: offset, factor: summary.picoAveraging, board: reader.run.settings.board).value }
             }
             let bin = column(time)

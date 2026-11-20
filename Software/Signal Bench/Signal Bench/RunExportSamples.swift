@@ -9,6 +9,7 @@ nonisolated final class RunExportSamples {
     let format: StreamExporter.Format
     let prefix: String
     let averaged: Bool
+    private let average14: Bool
     let legacy: ADCAveraging?
     let includesCleaned: Bool
     private var part = 0
@@ -27,6 +28,7 @@ nonisolated final class RunExportSamples {
         self.format = format
         self.prefix = prefix
         averaged = settings.picoAveraging != nil
+        average14 = settings.board == .unoR4 && settings.picoAveraging != nil
         legacy = format.writesBinary ? nil : settings.adcAveraging
         includesCleaned = format == .zip && hasExclusions
         try beginPart()
@@ -35,7 +37,7 @@ nonisolated final class RunExportSamples {
     var hasPrimary: Bool { format != .averaged || averaged }
 
     private var primaryName: String {
-        if format.writesBinary { return averaged ? "groups.avg1" : "raw.bin" }
+        if format.writesBinary { return averaged ? (average14 ? "groups.avg14" : "groups.avg1") : "raw.bin" }
         if format == .cleaned { return "cleaned.csv" }
         return averaged ? "averaged.csv" : "raw.csv"
     }
@@ -102,7 +104,7 @@ nonisolated final class RunExportSamples {
         try checkpoint()
         try csv?.flush()
         if let primary {
-            let type = format.writesBinary ? (averaged ? "signalbench.adc-groups-avg1" : "signalbench.adc-words-le") :
+            let type = format.writesBinary ? (averaged ? (average14 ? "signalbench.adc-groups-avg14" : "signalbench.adc-groups-avg1") : "signalbench.adc-words-le") :
                 (averaged ? "signalbench.adc-groups-csv" : "signalbench.adc-csv")
             outputs.append(try primary.finish(file: prefix + name(primaryName), type: type))
         }

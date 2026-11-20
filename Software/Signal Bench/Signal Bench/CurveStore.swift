@@ -205,7 +205,7 @@ nonisolated struct CurveReader: Sendable {
     func layout(_ item: CurveBlock) throws -> [CurveSpan] {
         let spans = try StreamFiles.decoder.decode([CurveSpan].self,
             from: CurveCodec.decode(frameData(item), length: item.frameExpanded))
-        let stride = PicoAverage.stride(item.source.picoAveraging)
+        let stride = PicoAverage.stride(item.source.picoAveraging, board: item.source.board)
         var end = item.first
         var count = 0
         guard (1...256).contains(spans.count), spans.first?.first == item.first else { throw CurveCodec.fault }
@@ -257,7 +257,7 @@ nonisolated struct CurveReader: Sendable {
             try autoreleasepool {
                 let frames = try layout(block)
                 let factor = block.source.picoAveraging
-                let stride = PicoAverage.stride(factor)
+                let stride = PicoAverage.stride(factor, board: run.settings.board)
                 var frame = 0
                 try CurveCodec.visit(data(block), modeled: block.modeled, count: block.count,
                                      spans: Self.contiguous(frames, stride: stride), factor: factor, board: run.settings.board) { offset, reading in
@@ -277,7 +277,7 @@ nonisolated struct CurveReader: Sendable {
             try autoreleasepool {
                 let factor = block.source.picoAveraging
                 try CurveCodec.visit(data(block), modeled: block.modeled, count: block.count,
-                    spans: Self.contiguous(layout(block), stride: PicoAverage.stride(factor)), factor: factor, board: run.settings.board) { _, _ in }
+                    spans: Self.contiguous(layout(block), stride: PicoAverage.stride(factor, board: run.settings.board)), factor: factor, board: run.settings.board) { _, _ in }
             }
         }
     }
@@ -381,7 +381,7 @@ nonisolated enum CurveStore {
         var sampled = 0.0
         var represented: UInt64 = 0
         let factor = run.settings.picoAveraging
-        let stride = PicoAverage.stride(factor)
+        let stride = PicoAverage.stride(factor, board: run.settings.board)
         let sourceFolder = try StreamFiles.directory("chunks", in: reader.store.runDirectory(run.id), create: false)
         let volume = try stage.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity
         guard volume.map({ $0 > 1_048_576 }) ?? true else { throw POSIXError(.ENOSPC) }

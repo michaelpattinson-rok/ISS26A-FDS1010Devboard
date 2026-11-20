@@ -57,6 +57,7 @@ struct StreamWaveform: View {
     let height: CGFloat
     let xAxis: Bool
     var flagTimes: [Double] = []
+    var pendingFlagTimes: [Double] = []
     var maskedTimes: [StreamSelection] = []
     var baseline: Double? = nil
     var baselineSpan: Double = 0
@@ -81,6 +82,8 @@ struct StreamWaveform: View {
     var dots: WaveformDots? = nil
     var means: [Double?] = []
     var allowMetal = true
+    var directLiveMetal = false
+    var onLivePresentation: ((UUID, Double) -> Void)?
     var metalFailed: Binding<Bool>? = nil
     var metalPresentation: Binding<Bool>? = nil
     var analogTrace: [(time: Double, value: Double?)]? = nil
@@ -88,6 +91,8 @@ struct StreamWaveform: View {
     var analogRange: ClosedRange<Double>? = nil
     var waveformLabel = "Raw ADC waveform"
     @State private var localMetalPresented = false
+    @State private var presentedDotID: UUID?
+    @State private var presentedDotRange: ClosedRange<Double>?
     @State private var localMetalFailed = false
     @FocusState private var focused: Bool
     @GestureState private var drag: (Double, Double)? = nil
@@ -124,20 +129,39 @@ struct StreamWaveform: View {
         else { localMetalPresented = value }
     }
 
+    private func metalUnavailable() {
+        setMetalPresented(false)
+        localMetalFailed = true
+        metalFailed?.wrappedValue = true
+    }
+
     private var plotTop: Double { height < 80 ? 4 : 12 }
 
     var body: some View {
         ZStack {
             if let metal, let dots {
                 GeometryReader { geometry in
-                    MetalWaveformLayer(renderer: metal, dots: dots, range: yRange,
-                                       onPreparing: { setMetalPresented(false) },
-                                       onPresented: { setMetalPresented(true) },
-                                       onFailure: {
-                                           setMetalPresented(false)
-                                           localMetalFailed = true
-                                           metalFailed?.wrappedValue = true
-                                       })
+                    Group {
+                        if directLiveMetal {
+                            LiveMetalWaveform(renderer: metal, dots: dots, range: yRange,
+                                              onPresented: { id, range, timestamp in
+                                                  presentedDotID = id
+                                                  presentedDotRange = range
+                                                  setMetalPresented(true)
+                                                  onLivePresentation?(id, timestamp)
+                                              },
+                                              onFailure: { metalUnavailable() })
+                                .opacity(presentedDotID == dots.id && presentedDotRange == yRange ? 1 : 0.001)
+                        } else {
+                            MetalWaveformLayer(renderer: metal, dots: dots, range: yRange,
+                                               onPreparing: { setMetalPresented(false) },
+                                               onPresented: { id, range in
+                                                   presentedDotID = id
+                                                   presentedDotRange = range
+                                                   setMetalPresented(true)
+                                               }, onFailure: { metalUnavailable() })
+                        }
+                    }
                     .frame(width: max(1, geometry.size.width - Self.left - Self.right),
                            height: max(1, geometry.size.height - (xAxis ? 26 : 10) - plotTop))
                     .offset(x: Self.left, y: plotTop)
@@ -287,7 +311,7 @@ struct StreamWaveform: View {
         }
         if style == .points, let dots {
             let shown = min(dots.values.count, WaveformDots.canvasLimit)
-            if !metalPresented, shown > 0 {
+            if (!metalPresented || presentedDotID != dots.id || presentedDotRange != yRange), shown > 0 {
                 let radius = shown > 4_000 ? 0.65 : 1.35
                 for offset in 0..<shown {
                     let point = dots.values[offset * dots.values.count / shown]
@@ -376,13 +400,29 @@ struct StreamWaveform: View {
             drawing.stroke(line(x(value), top, x(value), bottom), with: .color(.secondary),
                            style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
         }
-        for value in flagTimes where value >= selection.lower && value <= selection.upper {
+        var flagBuckets: [Int: (time: Double, count: Int, pending: Bool)] = [:]
+        for (times, pending) in [(flagTimes, false), (pendingFlagTimes, true)] {
+            for time in times where time >= selection.lower && time <= selection.upper {
+                let bucket = Int((x(time) - left) / 13)
+                let previous = flagBuckets[bucket]
+                flagBuckets[bucket] = (previous?.time ?? time, (previous?.count ?? 0) + 1, previous?.pending ?? pending)
+            }
+        }
+        for (_, mark) in flagBuckets.sorted(by: { $0.key < $1.key }) {
+            let position = min(x(mark.time), left + width - 8)
+            let tint = mark.pending ? Color.orange : .accentColor
             var flag = Path()
-            flag.move(to: .init(x: x(value), y: top + 6))
-            flag.addLine(to: .init(x: x(value) + 8, y: top + 10))
-            flag.addLine(to: .init(x: x(value), y: top + 14))
+            flag.move(to: .init(x: position, y: top + 3))
+            flag.addLine(to: .init(x: position + 8, y: top + 7))
+            flag.addLine(to: .init(x: position, y: top + 11))
             flag.closeSubpath()
-            drawing.fill(flag, with: .color(.accentColor))
+            drawing.stroke(line(position, top + 3, position, top + 20), with: .color(tint), lineWidth: 1.5)
+            if mark.pending { drawing.stroke(flag, with: .color(tint), lineWidth: 1.2) }
+            else { drawing.fill(flag, with: .color(tint)) }
+            if mark.count > 1 {
+                drawing.draw(Text(mark.count.formatted()).font(.system(size: 9, weight: .semibold)).foregroundStyle(tint),
+                             at: .init(x: position + 3, y: top + 21), anchor: .topLeading)
+            }
         }
         for value in cursorTimes where value >= selection.lower && value <= selection.upper {
             drawing.stroke(line(x(value), top, x(value), bottom), with: .color(.primary.opacity(0.65)),

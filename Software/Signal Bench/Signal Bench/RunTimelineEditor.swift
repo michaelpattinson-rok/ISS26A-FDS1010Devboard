@@ -9,6 +9,31 @@ struct RunTimelineEditor: View {
     @State private var renderedRange: StreamSelection?
     @State private var original: RunTimelineEntry?
     @State private var picked: WaveformSample?
+    @State private var invalidPick = false
+    @State private var suggested: WaveformSample?
+    @State private var selectedFlagID: UUID?
+    @State private var undo: FlagUndo?
+    private struct FlagUndo {
+        let before: RunTimelineEntry
+        let after: UUID?
+    }
+    private var chosen: WaveformSample? { picked ?? (flag && original == nil ? suggested : nil) }
+    private var orderedFlags: [RunTimelineEntry] {
+        (content?.entries ?? []).filter { $0.state == .placed || $0.state == .pending }
+            .sorted { (time($0.position) ?? .infinity, $0.id.uuidString) < (time($1.position) ?? .infinity, $1.id.uuidString) }
+    }
+
+    private func neighbor(_ forward: Bool) -> RunTimelineEntry? {
+        let flags = orderedFlags
+        if let i = flags.firstIndex(where: { $0.id == selectedFlagID }) {
+            let next = i + (forward ? 1 : -1)
+            return flags.indices.contains(next) ? flags[next] : nil
+        }
+        let anchor = chosen?.time ?? range?.lower ?? 0
+        return forward ? flags.first { (time($0.position) ?? .infinity) >= anchor } ?? flags.first
+            : flags.last { (time($0.position) ?? .infinity) <= anchor } ?? flags.last
+    }
+
     @State private var pickWork: Task<Void, Never>?
     @State private var picking = false
     @State private var label = ""
@@ -21,18 +46,22 @@ struct RunTimelineEditor: View {
     @State private var metalPresented = false
     @State private var confirmRemoval = false
     @State private var loading = true
+    @State private var usingSavedWaveform = false
+    @State private var timeInput = ""
+    @State private var pendingRemoval: RunTimelineEntry?
+    private var frozen: FrozenFlagWaveform? { usingSavedWaveform ? nil : request.frozen }
 
     private var live: Bool { bench.recording && bench.current?.id == request.runID }
     private var bounds: StreamSelection? {
-        if let frozen = request.frozen { return frozen.bounds }
+        if let frozen { return frozen.bounds }
         guard let content, content.duration > 0 else { return nil }
         return .init(lower: 0, upper: content.duration)
     }
     private var hasChanges: Bool { label != (original?.label ?? "") || note != (original?.note ?? "") || picked != nil }
     private var canSave: Bool {
-        guard !bench.timelineSaving, !picking, !bench.needsProjectAccess, content != nil,
+        guard !bench.timelineSaving, !picking, (!flag || !invalidPick), !bench.needsProjectAccess, content != nil,
               label.utf8.count <= 120, note.utf8.count <= 8192 else { return false }
-        return flag ? ((picked != nil || original?.position != nil) && !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        return flag ? ((chosen != nil || original?.position != nil) && !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             : !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -45,30 +74,41 @@ struct RunTimelineEditor: View {
                     else if flag && !loading { Text("No saved samples are available for flag placement.").foregroundStyle(.secondary) }
                     if loading && content == nil { ProgressView("Reading recording") }
                     form
-                    if let entries = content?.entries, !entries.isEmpty { entryList(entries) }
+                    if let entries = content?.entries { entryList(entries) }
                 }
                 .padding(20).frame(maxWidth: 950, alignment: .leading).frame(maxWidth: .infinity)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 footer.padding(.horizontal, 20).padding(.vertical, 10).frame(maxWidth: .infinity)
-                    .background(.regularMaterial)
+                    .background(Color(nsColor: .windowBackgroundColor))
                     .overlay(alignment: .top) { Divider() }
             }
         }
         .frame(minWidth: 495, minHeight: 450)
         .task(id: request.id) {
             newEntry(flag: request.tool != .note)
-            range = request.frozen?.bounds
+            usingSavedWaveform = false
+            range = frozen?.bounds
+            if request.tool == .flag, let frozen, frozen.end > frozen.first {
+                suggested = frozen.sample(atIndex: frozen.end - 1)
+                timeInput = suggested.map { format($0.time) } ?? ""
+            }
             await refresh(initial: true)
         }
         .task(id: PlotRequest(range: range, density: bench.waveformStyle == .points ? bench.dotDensity : nil,
-                              indexed: content?.overview != nil)) {
+                              indexed: content?.overview != nil, usingSavedWaveform: usingSavedWaveform)) {
             await updatePlot()
         }
         .onDisappear { cancelPick() }
         .onChange(of: flag) { _, _ in cancelPick() }
         .onChange(of: hasChanges) { _, dirty in bench.timelineChanged(request.id, dirty: dirty) }
-        .onChange(of: live) { _, _ in Task { await refresh() } }
+        .onChange(of: live) { _, isLive in
+            if !isLive { usingSavedWaveform = true }
+            Task { await refresh() }
+        }
+        .onChange(of: bench.timelineRevision) { _, _ in
+            if !bench.timelineSaving { Task { await refresh() } }
+        }
         .onChange(of: bench.qualityRevisions[request.runID]) { _, _ in
             if !live && request.frozen == nil { Task { await refresh() } }
         }
@@ -78,8 +118,11 @@ struct RunTimelineEditor: View {
             }) == true else { return }
             Task { await refresh() }
         }
-        .confirmationDialog("Remove this timeline entry?", isPresented: $confirmRemoval) {
-            Button("Remove Entry", role: .destructive) { if let original { persist(original, remove: true) } }
+        .confirmationDialog("Remove this flag or note?", isPresented: $confirmRemoval) {
+            Button("Remove Entry", role: .destructive) {
+                if let pendingRemoval { persist(pendingRemoval, remove: true) }
+                pendingRemoval = nil
+            }
         } message: {
             Text("The raw samples stay in the recording.")
         }
@@ -88,7 +131,7 @@ struct RunTimelineEditor: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(request.frozen == nil ? "Flags & Notes" : "Place a Flag").font(.title2.weight(.semibold))
+                Text(frozen != nil ? "Place a Flag" : request.tool == .note ? "Flags & Notes" : "Flag Manager").font(.title2.weight(.semibold))
                 Spacer()
                 if live {
                     Button(bench.stopping ? "Saving…" : bench.activeMode == .manual ? "Release Outputs and Stop" : "Stop Recording",
@@ -99,11 +142,18 @@ struct RunTimelineEditor: View {
                 }
             }
             if live { Label("Recording continues", systemImage: "record.circle").font(.caption).foregroundStyle(.secondary) }
-            if live && request.frozen == nil {
-                Button("Capture Flag Window…") { bench.openLiveTimeline(.flag, replacing: true) }
-                    .disabled(hasChanges || bench.preview.received == 0)
+            if live {
+                if frozen == nil {
+                    Button("Freeze Latest Waveform…") { bench.openLiveTimeline(.flag, replacing: true) }
+                        .disabled(hasChanges || bench.preview.received == 0)
+                } else {
+                    Button("Browse Saved Samples") {
+                        usingSavedWaveform = true
+                        Task { await refresh() }
+                    }.disabled(content?.duration == 0)
+                }
             }
-            if let frozen = request.frozen {
+            if let frozen {
                 Text("Frozen at \(frozen.click.formatted(date: .omitted, time: .standard)) · Mac click time · Dotted line marks the received boundary")
                     .font(.caption).foregroundStyle(.secondary)
             } else if let run = content?.reader.run {
@@ -134,6 +184,15 @@ struct RunTimelineEditor: View {
                                   rendererLimited: !metalPresented || metalFailed)
             }
             WaveformFPSControl(fps: $bench.reviewFPS)
+            HStack {
+                Button("Previous Flag") { if let prior = neighbor(false) { Task { await jump(to: prior) } } }
+                    .disabled(neighbor(false) == nil || hasChanges)
+                Button("Next Flag") { if let next = neighbor(true) { Task { await jump(to: next) } } }
+                    .disabled(neighbor(true) == nil || hasChanges)
+                if let entry = orderedFlags.first(where: { $0.id == selectedFlagID }), let time = time(entry.position) {
+                    Text("\(entry.label) · \(format(time)) s").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
             if let plot, let renderedRange {
                 chart(plot, in: renderedRange, compact: compact)
                 if let bounds, let range {
@@ -183,10 +242,13 @@ struct RunTimelineEditor: View {
         view.gaps = plot.gaps
         view.samples = plot.samples
         view.flagTimes = (content?.entries ?? []).filter { $0.state == .placed }.compactMap { time($0.position) }
-        view.cursorTimes = [picked?.time ?? (original?.state == .unavailable ? nil : time(original?.position))].compactMap { $0 }
+        view.pendingFlagTimes = (content?.entries ?? []).filter { $0.state == .pending }.compactMap { time($0.position) }
+        let selected = orderedFlags.first { $0.id == selectedFlagID }
+        view.cursorTimes = [picked?.time ?? time(selected?.position)
+            ?? (original?.state == .unavailable ? nil : time(original?.position)) ?? chosen?.time].compactMap { $0 }
         view.referenceTime = request.frozen?.bounds.upper
         view.navigate = navigate
-        view.cursor = pick
+        view.cursor = { pick($0) }
         view.home = { range = bounds }
         return view
     }
@@ -205,7 +267,9 @@ struct RunTimelineEditor: View {
                 }
             }
             if flag {
-                if let picked {
+                if invalidPick {
+                    Text("Choose a sample to place the flag.").font(.callout).foregroundStyle(.secondary)
+                } else if let picked = chosen {
                     let value = picked.readingLabel
                     Text("\(format(picked.time)) s · \(picked.indexLabel) · \(value)")
                         .font(.callout.monospacedDigit())
@@ -214,6 +278,23 @@ struct RunTimelineEditor: View {
                     Text("\(format(seconds)) s · Sample \(position.index.formatted()) · \(value)").font(.callout.monospacedDigit())
                 } else {
                     Text("Click the waveform to choose a sample.").font(.callout).foregroundStyle(.secondary)
+                }
+                HStack {
+                    TextField("Elapsed time in seconds", text: $timeInput)
+                        .textFieldStyle(.roundedBorder).frame(maxWidth: 200)
+                        .accessibilityLabel("Flag elapsed time in seconds")
+                    Button("Use Time") {
+                        guard let value = enteredTime else { return }
+                        Task {
+                            if let recent = request.frozen, live, recent.bounds.containsTime(value) {
+                                usingSavedWaveform = false
+                            } else {
+                                usingSavedWaveform = true
+                                if live { await refresh() }
+                            }
+                            seek(value)
+                        }
+                    }.disabled(enteredTime == nil || picking || bench.timelineSaving)
                 }
                 TextField("Flag label", text: $label).textFieldStyle(.roundedBorder)
             }
@@ -230,52 +311,104 @@ struct RunTimelineEditor: View {
 
     private var footer: some View {
         HStack {
-            if original != nil {
+            if original != nil && !hasChanges {
                 Button("New Entry") { newEntry(flag: flag) }.disabled(bench.timelineSaving)
-                Button("Remove…", role: .destructive) { confirmRemoval = true }.disabled(bench.timelineSaving)
+                Button("Remove…", role: .destructive) {
+                    pendingRemoval = original
+                    confirmRemoval = true
+                }.disabled(bench.timelineSaving)
             }
             if hasChanges {
                 Button("Discard Changes") {
                     cancelPick()
                     picked = nil
+                    invalidPick = false
                     label = original?.label ?? ""
                     note = original?.note ?? ""
                     status = nil
                     problem = false
                 }.disabled(bench.timelineSaving)
             }
+            if undo != nil && !hasChanges {
+                Button("Undo Flag Change", action: undoFlagChange).keyboardShortcut("z", modifiers: [.command, .option])
+                    .disabled(bench.timelineSaving)
+            }
             Spacer()
-            Button(bench.timelineSaving ? "Saving…" : flag ? "Save Flag" : "Save Note", action: save)
-                .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(!canSave)
+            Button(bench.timelineSaving ? "Saving…" : flag ? "Save" : "Save Note") { save(close: false) }
+                .buttonStyle(.bordered).keyboardShortcut("s", modifiers: .command).disabled(!canSave)
+            if flag && (live || request.frozen != nil) {
+                Button("Save and Close Flag") { save(close: true) }
+                    .buttonStyle(.borderedProminent).keyboardShortcut(.return, modifiers: .command).disabled(!canSave)
+            }
         }
     }
 
     private func entryList(_ entries: [RunTimelineEntry]) -> some View {
-        DisclosureGroup("Saved flags and notes (\(entries.count))") {
-            LazyVStack(alignment: .leading, spacing: 9) {
-                ForEach(entries) { entry in
-                    Button {
-                        cancelPick()
+        VStack(alignment: .leading, spacing: 9) {
+            Divider()
+            Text("Earlier Flags and Notes").font(.headline)
+            if entries.isEmpty { Text("No flags or notes yet.").foregroundStyle(.secondary) }
+            ForEach(entries) { entry in
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label(entry.label.isEmpty ? entry.note : entry.label,
+                              systemImage: entry.position == nil ? "note.text" : "flag")
+                            .lineLimit(1)
+                        Text(stateText(entry)).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 4)
+                    if entry.position != nil && entry.state != .unavailable {
+                        Button("Jump") { Task { await jump(to: entry) } }
+                    }
+                    Button("Edit") {
+                        newEntry(flag: entry.position != nil)
                         original = entry
-                        flag = entry.position != nil
                         label = entry.label
                         note = entry.note
-                        picked = nil
+                        timeInput = time(entry.position).map(format) ?? ""
                         status = stateText(entry)
                         problem = entry.state == .unavailable
-                        if let value = time(entry.position), let bounds, value >= bounds.lower, value < bounds.upper {
-                            setRange(center: value, width: min(2, bounds.upper - bounds.lower))
-                        }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Label(entry.label.isEmpty ? entry.note : entry.label, systemImage: entry.position == nil ? "note.text" : "flag")
-                                .lineLimit(1)
-                            Text(stateText(entry)).font(.caption).foregroundStyle(.secondary)
-                        }
-                    }.buttonStyle(.link).disabled(bench.timelineSaving)
-                }
-            }.padding(.top, 7)
+                        Task { await jump(to: entry) }
+                    }
+                    Button("Remove…") { pendingRemoval = entry; confirmRemoval = true }
+                }.disabled(bench.timelineSaving || hasChanges)
+            }
         }
+    }
+
+    private func jump(to entry: RunTimelineEntry) async {
+        guard let position = entry.position, let timestamp = time(position) else { return }
+        if let recent = request.frozen, recent.bounds.containsTime(timestamp), entry.state == .pending {
+            usingSavedWaveform = false
+        } else if frozen?.bounds.containsTime(timestamp) != true {
+            usingSavedWaveform = true
+            if live { await refresh() }
+        }
+        guard let bounds, bounds.containsTime(timestamp) else {
+            status = "This position is outside the saved waveform. Wait for the sample to be committed."
+            problem = true
+            return
+        }
+        selectedFlagID = entry.id
+        setRange(center: timestamp, width: min(2, bounds.upper - bounds.lower))
+    }
+
+    private var enteredTime: Double? {
+        let trimmed = timeInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let seconds = Double(trimmed) ?? (try? Double(trimmed, format: .number)),
+              seconds.isFinite, seconds >= 0 else { return nil }
+        return seconds
+    }
+
+    private func seek(_ seconds: Double) {
+        guard let bounds, bounds.containsTime(seconds) else {
+            accept(nil)
+            return
+        }
+        if range?.containsTime(seconds) != true {
+            setRange(center: seconds, width: range.map { min(2, $0.upper - $0.lower) } ?? 2)
+        }
+        pick(seconds, requireRenderedRange: false)
     }
 
     private func time(_ position: RunTimelineEntry.Position?) -> Double? {
@@ -288,7 +421,7 @@ struct RunTimelineEditor: View {
     private func stateText(_ entry: RunTimelineEntry) -> String {
         switch entry.state {
         case .note: entry.created.formatted(date: .abbreviated, time: .shortened)
-        case .pending: "Waiting for the selected sample to reach disk"
+        case .pending: (time(entry.position).map { "\(format($0)) s · " } ?? "") + "Pending sample save"
         case .unavailable: "The selected sample was lost. The label and any note were kept."
         case .placed: time(entry.position).map { "\(format($0)) s" } ?? "Sample saved"
         }
@@ -298,34 +431,53 @@ struct RunTimelineEditor: View {
         cancelPick()
         original = nil
         picked = nil
+        invalidPick = false
+        suggested = nil
+        selectedFlagID = nil
         label = ""
         note = ""
+        timeInput = ""
         status = nil
         problem = false
         self.flag = flag
     }
 
-    private func save() {
+    private func save(close: Bool) {
         var entry = original ?? RunTimelineEntry(click: request.frozen?.click)
         entry.label = flag ? label.trimmingCharacters(in: .whitespacesAndNewlines) : ""
         entry.note = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        if flag, let picked {
+        if flag, let picked = chosen {
             entry.position = RunTimelineEntry.Position(picked)
             entry.state = .pending
         } else if !flag {
             entry.position = nil
             entry.state = .note
         }
-        persist(entry, remove: false)
+        persist(entry, remove: false, close: close)
     }
 
-    private func persist(_ entry: RunTimelineEntry, remove: Bool) {
+    private func persist(_ entry: RunTimelineEntry, remove: Bool, close: Bool = false) {
         let revision = original?.revision
+        let before = original
+        let addingLive = live && flag && original == nil && !remove
         Task {
             do {
                 let saved = try await bench.writeTimeline(entry, replacing: revision, run: request.runID, removing: remove)
-                if remove { newEntry(flag: flag) }
-                else {
+                if close, bench.timeline?.id == request.id {
+                    if saved.state == .pending { bench.notice = "Flag saved. Its selected sample is pending." }
+                    bench.closeTimeline()
+                    return
+                }
+                if remove {
+                    if entry.position != nil { undo = .init(before: entry, after: nil) }
+                    if selectedFlagID == entry.id { selectedFlagID = nil }
+                    if original?.id == entry.id { newEntry(flag: flag) }
+                    status = "Entry removed."
+                } else if addingLive {
+                    newEntry(flag: true)
+                    status = saved.state == .pending ? "Flag saved. Its selected sample is pending." : "Flag saved."
+                } else {
+                    if let before, before.position != saved.position { undo = .init(before: before, after: saved.revision) }
                     original = saved
                     label = saved.label
                     note = saved.note
@@ -338,14 +490,37 @@ struct RunTimelineEditor: View {
         }
     }
 
+    private func undoFlagChange() {
+        guard let undo else { return }
+        Task {
+            do {
+                let restored = try await bench.writeTimeline(undo.before, replacing: undo.after, run: request.runID)
+                newEntry(flag: true)
+                self.undo = nil
+                await refresh()
+                await jump(to: restored)
+                status = "Flag restored."
+            } catch {
+                status = error.localizedDescription
+                problem = true
+            }
+        }
+    }
+
     private func refresh(initial: Bool = false) async {
         let startedLive = live
         do {
             let latest = try await bench.timelineLoad(for: request)
             guard !Task.isCancelled, bench.timeline?.id == request.id, startedLive == live else { return }
             content = latest
-            if (initial || range == nil) && request.frozen == nil, latest.duration > 0 {
-                range = .init(lower: 0, upper: latest.overview == nil ? min(2, latest.duration) : latest.duration)
+            if frozen == nil {
+                if latest.duration <= 0 {
+                    range = nil
+                    plot = nil
+                    renderedRange = nil
+                } else if initial || range.map({ $0.upper > latest.duration }) != false {
+                    range = .init(lower: 0, upper: latest.overview == nil ? min(2, latest.duration) : latest.duration)
+                }
             }
             if let original, original.state == .pending,
                let updated = latest.entries.first(where: { $0.id == original.id }), updated.state != .pending {
@@ -385,11 +560,12 @@ struct RunTimelineEditor: View {
         var range: StreamSelection?
         var density: Double?
         var indexed: Bool
+        var usingSavedWaveform: Bool
     }
 
     private func updatePlot() async {
         guard let range else { return }
-        let frozen = request.frozen, reader = content?.reader, overview = content?.overview
+        let frozen = self.frozen, reader = content?.reader, overview = content?.overview
         let density = bench.waveformStyle == .points ? bench.dotDensity : nil
         try? await Task.sleep(for: .nanoseconds(1_000_000_000 / max(1, bench.reviewFPS)))
         guard !Task.isCancelled else { return }
@@ -425,10 +601,10 @@ struct RunTimelineEditor: View {
         picking = false
     }
 
-    private func pick(_ time: Double) {
-        guard flag, renderedRange == range else { return }
+    private func pick(_ time: Double, requireRenderedRange: Bool = true) {
+        guard flag, !requireRenderedRange || renderedRange == range else { return }
         cancelPick()
-        if let frozen = request.frozen { accept(frozen.sample(at: time)); return }
+        if let frozen { accept(frozen.sample(at: time)); return }
         guard let reader = content?.reader else { return }
         picking = true
         pickWork = Task {
@@ -445,8 +621,17 @@ struct RunTimelineEditor: View {
     }
 
     private func accept(_ sample: WaveformSample?) {
-        guard let sample else { status = "No sample at this position. Choose outside the gap."; problem = true; return }
+        guard let sample else {
+            invalidPick = true
+            picked = nil
+            status = "No sample at this position. Choose outside the gap."
+            problem = true
+            return
+        }
+        invalidPick = false
         picked = sample
+        selectedFlagID = nil
+        timeInput = format(sample.time)
         status = nil
         problem = false
     }

@@ -47,6 +47,7 @@ nonisolated struct ProjectJob: Codable, Identifiable, Sendable {
         let profile: UUID?
         let annotations: UUID?
         let recordedReadings: UInt64
+        var ranges: [ReviewRange]? = nil
 
         static func pin(_ original: StreamRangeReader, selection: StreamSelection, validateCoverage: Bool = true) throws -> Self {
             let reader = try original.prepared()
@@ -63,26 +64,48 @@ nonisolated struct ProjectJob: Codable, Identifiable, Sendable {
             digest.update(data: try StreamFiles.encoder.encode(index))
             var count: UInt64 = 0
             let segments = Dictionary(uniqueKeysWithValues: run.segments.map { ($0.id, $0) })
+            var selected: [UUID: ReviewRange] = [:]
             for summary in index {
                 try Task.checkCancellation()
                 guard let segment = segments[summary.segment] else { continue }
                 let bounds = ReviewInput.indices(selection, segment: segment, rate: run.settings.nominalRate)
                 let lo = max(bounds.lowerBound, summary.first), hi = min(bounds.upperBound, summary.end)
-                if hi > lo { count += min(UInt64(summary.readingCount), hi - lo) }
+                if hi > lo {
+                    count += min(UInt64(summary.readingCount), hi - lo)
+                    selected[segment.id] = .init(segment: segment.id, first: min(lo, selected[segment.id]?.first ?? lo),
+                                                 end: max(hi, selected[segment.id]?.end ?? hi))
+                }
             }
             guard count > 0 else { throw StreamFailure.storage("The selected range contains no saved readings.") }
             let source = digest.finalize().map { String(format: "%02x", $0) }.joined()
             return .init(run: run.id, selection: selection, source: source, profile: run.settings.profile?.id,
-                         annotations: annotations, recordedReadings: count)
+                         annotations: annotations, recordedReadings: count, ranges: run.segments.compactMap { selected[$0.id] })
         }
 
         func verify(_ reader: StreamRangeReader) throws {
             let current = try Self.pin(reader, selection: selection)
-            guard current.source == source, current.annotations == annotations, current.profile == profile else {
+            guard current.source == source, current.annotations == annotations, current.profile == profile,
+                  ranges == nil || current.ranges == ranges else {
                 throw ReviewWorkerError.stale
             }
         }
     }
+
+    struct ModelProvenance: Codable, Sendable {
+        let model: String
+        let reasoning: LMStudioClient.Reasoning
+        var analyzer = StudioRangeReview.version
+        var comparison = StudioRangeReview.comparisonVersion
+        var processing = ReviewSettings.version
+
+        var current: Bool {
+            analyzer == StudioRangeReview.version && comparison == StudioRangeReview.comparisonVersion &&
+                processing == ReviewSettings.version
+        }
+    }
+
+    var model: ModelProvenance? = nil
+    var fixtureProofs: [Input]? = nil
 
     var version = 1
     var id = UUID()
@@ -109,10 +132,10 @@ nonisolated struct ProjectJob: Codable, Identifiable, Sendable {
     var curve: CurveJobSpec? = nil
 
     var picksDestination: Bool { kind.format != nil || curve?.action == .zip || curve?.action == .csv }
-    var title: String { curve?.action.title ?? kind.title }
+    var title: String { model != nil && kind == .zip ? "Selected Range ZIP" : (curve?.action.title ?? kind.title) }
 
     var valid: Bool {
-        version == 1 && (try? SessionStore.projectName(name)) == name && input.selection.valid && ProfileDigest.valid(input.source)
+        version == 1 && (model.map { (1...512).contains($0.model.utf8.count) } ?? true) && (try? SessionStore.projectName(name)) == name && input.selection.valid && ProfileDigest.valid(input.source)
             && input.recordedReadings > 0 && input.recordedReadings <= StreamWire.maxSampleBoundary * 1000
             && (0...Int64(10_000_000_000_000)).contains(estimatedBytes) && (0...1).contains(progress)
             && (message?.utf8.count ?? 0) <= 8192
@@ -135,7 +158,7 @@ nonisolated struct ProjectJob: Codable, Identifiable, Sendable {
         let settings = reader.run.settings
         let kind = Kind.allCases.first { $0.format == format }!
         let bytes = format.estimatedBytes(samples: input.recordedReadings, averaging: settings.adcAveraging,
-            pico: settings.picoAveraging, hasExclusions: !(try RunAnnotations.read(reader)?.masks.isEmpty ?? true))
+            pico: settings.picoAveraging, hasExclusions: !(try RunAnnotations.read(reader)?.masks.isEmpty ?? true), board: settings.board)
         return .init(project: reader.store.identity.id, kind: kind, input: input,
                      name: try SessionStore.projectName(name), estimatedBytes: Int64(bytes.rounded(.up)),
                      includeAnalyses: includeAnalyses, needsDestination: external)
@@ -206,20 +229,27 @@ nonisolated enum ProjectJobFiles {
         let reader = try StreamRangeReader(store: store, run: run).prepared()
         let leases = try Set([run.id] + (job.fixtureInputs ?? [])).map { try ProjectReview.ReadLease(store.runDirectory($0)) }
         defer { withExtendedLifetime(leases) {} }
-        try job.input.verify(reader)
+        func verifyInputs() throws {
+            guard job.model?.current != false else { throw ReviewWorkerError.stale }
+            try job.input.verify(.init(store: store, run: store.openRun(run.id)))
+            for proof in job.fixtureProofs ?? [] {
+                try proof.verify(.init(store: store, run: store.openRun(proof.run)))
+            }
+        }
+        try verifyInputs()
         try control.checkpoint()
         if let format = job.kind.format {
             guard !job.needsDestination || destination != nil else { throw StreamFailure.storage("Choose an export location to retry this job.") }
             let folder = try destination ?? store.exports()
             if let available = try folder.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity {
-                let minimum = format.writesBinary ? Int64(job.input.recordedReadings) * Int64(PicoAverage.stride(run.settings.picoAveraging)) :
+                let minimum = format.writesBinary ? Int64(job.input.recordedReadings) * Int64(PicoAverage.stride(run.settings.picoAveraging, board: run.settings.board)) :
                     min(job.estimatedBytes, 64 * 1024 * 1024)
                 guard Int64(available) >= minimum else { throw StreamFailure.storage("The selected export volume is short on free space.") }
             }
             return try StreamExporter.export(reader, name: job.name, selection: job.input.selection, format: format,
-                includeAnalyses: job.includeAnalyses, destination: folder, progress: progress,
+                includeAnalyses: job.includeAnalyses, destination: folder, scoped: job.model != nil, progress: progress,
                 checkpoint: control.checkpoint, beforePublish: {
-                    try job.input.verify(StreamRangeReader(store: store, run: store.openRun(run.id)))
+                    try verifyInputs()
                     try control.checkpoint()
                 })
         }
@@ -235,7 +265,7 @@ nonisolated enum ProjectJobFiles {
             case .exclusions:
                 let settings = try (job.settings ?? ReviewWorkerSettings()).resolved(run)
                 let masks = try RunAnnotations.preview(reader, selection: job.input.selection, policy: .conservative, settings: settings,
-                                                      checkpoint: control.checkpoint)
+                                                      limitContext: job.model != nil, checkpoint: control.checkpoint)
                 let proposal = JobExclusionProposal(input: job.input, intervals: masks)
                 try StreamFiles.publish(proposal, at: stage.appendingPathComponent("exclusion-proposal.json"))
                 for mask in masks { try writer.item(mask) }
@@ -266,7 +296,7 @@ nonisolated enum ProjectJobFiles {
             }
             _ = try writer.finish(file: "findings.jsonl", type: "signalbench.job-findings")
             try StreamFiles.publish(job, at: stage.appendingPathComponent("job.json"))
-            try job.input.verify(StreamRangeReader(store: store, run: store.openRun(run.id)))
+            try verifyInputs()
             if let expected = job.timingHash, try FixtureEvidence.reference(reader).1 != expected { throw ReviewWorkerError.stale }
             try control.checkpoint()
         }

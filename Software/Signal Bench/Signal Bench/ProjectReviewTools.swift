@@ -4,7 +4,15 @@ nonisolated struct ReviewJobDraft: Encodable, Identifiable, Sendable {
     let id = UUID()
     let jobs: [ProjectJob]
 
-    static func make(_ request: ReviewRequest, readers: [StreamRangeReader], approved: Set<UUID>) throws -> Self {
+    func withModel(_ model: ProjectJob.ModelProvenance) -> Self {
+        .init(jobs: jobs.map { job in
+            var job = job
+            job.model = model
+            return job
+        })
+    }
+
+    static func make(_ request: ReviewRequest, readers: [StreamRangeReader], approved: Set<UUID>, scopes: [UUID: StreamSelection] = [:], partial: Set<UUID> = []) throws -> Self {
         guard let kind = request.jobKind, [.quality, .comparison, .fixture, .exclusions, .zip].contains(kind),
               (1...20).contains(readers.count), request.range == nil || readers.count == 1,
               request.visibleSelection == nil || readers.count == 1 else {
@@ -17,7 +25,8 @@ nonisolated struct ReviewJobDraft: Encodable, Identifiable, Sendable {
             }
         case .fixture:
             guard request.template != nil, request.weighted != nil, request.settings == nil, request.reference == nil,
-                  request.range == nil, request.visibleSelection == nil else {
+                  request.range == nil, request.visibleSelection == nil,
+                  readers.allSatisfy({ !partial.contains($0.run.id) }) else {
                 throw ReviewWorkerError.invalid("Fixture replay requires a template, weighting and the complete run.")
             }
         case .exclusions:
@@ -36,13 +45,23 @@ nonisolated struct ReviewJobDraft: Encodable, Identifiable, Sendable {
             guard approved.contains(run.id), !run.isManualDraft, !run.segments.isEmpty else {
                 throw ReviewWorkerError.invalid("This run is outside the approved Project review.")
             }
-            let selection = try ReviewWorker.selection(request, reader: reader)
+            var scoped = request
+            if let bounds = scopes[run.id] {
+                if let requested = scoped.visibleSelection {
+                    guard requested.valid, requested.lower >= bounds.lower, requested.upper <= bounds.upper else {
+                        throw ReviewWorkerError.invalid("The job is outside the approved review interval.")
+                    }
+                } else {
+                    scoped.visibleSelection = bounds
+                }
+            }
+            let selection = try ReviewWorker.selection(scoped, reader: reader)
             if kind == .zip {
                 // A generated suffix distinguishes queued exports without replacing any existing file.
                 var prefix = run.name
                 while prefix.utf8.count > 100 { prefix.removeLast() }
                 let name = prefix + " " + String(UUID().uuidString.prefix(8))
-                return try ProjectJob.export(reader, name: name, selection: selection, format: .zip, includeAnalyses: true, external: false)
+                return try ProjectJob.export(reader, name: name, selection: selection, format: .zip, includeAnalyses: false, external: false)
             }
             let input = try ProjectJob.Input.pin(reader, selection: selection)
             var job = ProjectJob(project: reader.store.identity.id, kind: kind, input: input,
@@ -57,12 +76,18 @@ nonisolated struct ReviewJobDraft: Encodable, Identifiable, Sendable {
                     throw ReviewWorkerError.invalid("Use an eligible held out run and a compatible template.")
                 }
                 let dependencies = template.training.map(\.run) + [template.noise?.run].compactMap { $0 }
-                guard dependencies.allSatisfy(approved.contains) else {
+                guard dependencies.allSatisfy({ approved.contains($0) && !partial.contains($0) }) else {
                     throw ReviewWorkerError.invalid("Approve the fixture template’s training and noise runs first.")
                 }
                 job.template = template.id
                 job.templateHash = try StreamFiles.sha(StreamFiles.encoder.encode(template))
                 job.fixtureInputs = dependencies
+                job.fixtureProofs = try Set(dependencies).map { id in
+                    let dependency = try reader.store.openRun(id)
+                    let input = try StreamRangeReader(store: reader.store, run: dependency).prepared()
+                    let full = try ReviewWorker.selection(nil as ReviewRange?, reader: input)
+                    return try ProjectJob.Input.pin(input, selection: full)
+                }.sorted { $0.run.uuidString < $1.run.uuidString }
                 job.weighted = request.weighted
                 if run.settings.bench?.step == .fixture { job.timingHash = try FixtureEvidence.reference(reader).1 }
             }
@@ -225,9 +250,9 @@ nonisolated enum ProjectReviewTools {
         let settings = reader.run.settings
         let exclusions = try RunAnnotations.read(reader)?.masks.isEmpty == false
         let bytes = StreamExporter.Format.zip.estimatedBytes(samples: input.recordedReadings,
-            averaging: settings.adcAveraging, pico: settings.picoAveraging, hasExclusions: exclusions)
+            averaging: settings.adcAveraging, pico: settings.picoAveraging, hasExclusions: exclusions, board: settings.board)
         return .init(run: reader.run.id, selection: selection, indexedReadings: input.recordedReadings,
                      fullZIPUncompressedSampleBytes: Int64(bytes),
-                     binaryPayloadBytes: Int64(input.recordedReadings) * Int64(PicoAverage.stride(settings.picoAveraging)))
+                     binaryPayloadBytes: Int64(input.recordedReadings) * Int64(PicoAverage.stride(settings.picoAveraging, board: settings.board)))
     }
 }

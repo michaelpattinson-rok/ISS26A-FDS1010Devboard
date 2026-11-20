@@ -24,11 +24,13 @@ nonisolated struct StreamChunkSummary: Codable, Equatable, Sendable {
     let first: UInt64
     let end: UInt64
     let picoAveraging: ADCAveraging?
+    let averagingBoard: AcquisitionBoard?
+    var board: AcquisitionBoard { averagingBoard ?? .picoW }
 
-    var readingCount: Int { bytes / PicoAverage.stride(picoAveraging) }
+    var readingCount: Int { bytes / PicoAverage.stride(picoAveraging, board: board) }
     var valid: Bool {
-        (PicoAverage.stride(picoAveraging)...StreamProjectStore.chunkLimit).contains(bytes)
-            && bytes.isMultiple(of: PicoAverage.stride(picoAveraging))
+        (PicoAverage.stride(picoAveraging, board: board)...StreamProjectStore.chunkLimit).contains(bytes)
+            && bytes.isMultiple(of: PicoAverage.stride(picoAveraging, board: board))
             && first < end && end <= StreamWire.maxSampleBoundary / UInt64(picoAveraging?.count ?? 1)
             && UInt64(readingCount) <= end - first && ProfileDigest.valid(sha256)
     }
@@ -39,6 +41,7 @@ nonisolated struct StreamChunkSummary: Codable, Equatable, Sendable {
         segment = chunk.segment
         bytes = chunk.bytes
         picoAveraging = chunk.picoAveraging
+        averagingBoard = chunk.averagingBoard
         sha256 = chunk.sha256
         first = chunk.slices[0].first
         end = last.first + UInt64(last.count)
@@ -72,8 +75,14 @@ nonisolated struct StreamRunSettings: Codable, Equatable, Sendable {
     var acquisitionBoard: AcquisitionBoard? = nil
     var prerunPlan: CalibratedPrerun.Plan? = nil
     var prerun: CalibratedPrerun.Link? = nil
+    var mainsHum: MainsHumCapture? = nil
+    var unoCandidates: UnoCandidateSettings? = nil
+    var startupDelaySeconds: Int? = nil
+    var allowsLiveDurationEdit: Bool { usesStartupDelay && prerunPlan == nil }
+    var usesStartupDelay: Bool { mode != .calibration && purpose == nil && bench == nil && mainsHum == nil }
     var board: AcquisitionBoard { acquisitionBoard ?? .picoW }
     var factor: Int { picoAveraging?.count ?? 1 }
+    var runVersion: Int { board == .unoR4 ? (picoAveraging == nil ? 4 : 5) : (picoAveraging == nil ? 1 : 2) }
     var rawConfiguredRate: Double { board.rate(nominalRate) }
     var recordedRate: Double { rawConfiguredRate / Double(factor) }
     var libraryRecordedRate: Double { adcAveraging?.rate(from: rawConfiguredRate) ?? recordedRate }
@@ -89,9 +98,12 @@ nonisolated struct StreamRunSettings: Codable, Equatable, Sendable {
     }
     var valid: Bool {
         StreamWire.customRates.contains(nominalRate) && (1...StreamWire.maxDuration).contains(duration) && (0...2).contains(channel)
+        && (startupDelaySeconds.map { usesStartupDelay && StreamStartupDelay.supported.contains($0) } ?? true)
+        && (unoCandidates.map { $0.valid && board == .unoR4 && nominalRate == 100_000 && channel == 0 &&
+            picoAveraging == nil && adcAveraging == nil && [.main, .manual, .diagnosis].contains(mode) } ?? true)
         && (mode == .diagnosis || channel == 0) && wiring.utf8.count <= 1024
         && (picoAveraging == nil || adcAveraging == nil)
-        && (board == .picoW || (board.benchRates.contains(nominalRate) && picoAveraging == nil && adcAveraging == nil))
+        && (board == .picoW || (board.supportsSavedRate(nominalRate) && (nominalRate != 500_000 || picoAveraging == nil) && adcAveraging == nil))
         && [profile?.setup, calibrationSetup, bench?.setup].compactMap { $0 }.allSatisfy { $0.acquisitionDevice == board }
         && (profile.map { $0.setup.picoAveraging == picoAveraging } ?? true)
         && (calibrationSetup.map { $0.picoAveraging == picoAveraging } ?? true)
@@ -102,6 +114,7 @@ nonisolated struct StreamRunSettings: Codable, Equatable, Sendable {
         && (mode != .calibrated || (profile?.valid == true && profile?.ready == true && profile?.setup.gain == gain && profile?.setup.nominalHz == nominalRate))
         && (mode != .calibration || (calibrationAttempt != nil && calibrationPhase != nil && calibrationSetup?.valid == true && calibrationSetup?.gain == gain && calibrationSetup?.nominalHz == nominalRate))
         && (mode != .diagnosis || !wiring.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        && (mainsHum.map { $0.matches(self) && purpose == nil && profile == nil && bench == nil } ?? true)
         && (purpose == nil || (mode == .calibrated && purpose == "localDarkCheck") || (mode == .main && purpose == "rateBenchmark"))
         && (prerunPlan.map { $0.valid && mode == .calibrated && purpose == "localDarkCheck" && duration == $0.length.seconds && prerun == nil } ?? true)
         && (prerun.map { $0.valid && purpose == nil && (mode == .calibrated || (mode == .main && profile == nil)) } ?? true)
@@ -126,10 +139,10 @@ nonisolated struct ManualSampleQuality: Codable, Equatable, Sendable {
 
     mutating func append(_ data: Data, averaging: ADCAveraging?, board: AcquisitionBoard = .picoW) throws {
         guard let averaging else { append(data, board: board); return }
-        let size = PicoAverage.stride(averaging)
+        let size = PicoAverage.stride(averaging, board: board)
         try data.withUnsafeBytes { bytes in
             for offset in stride(from: 0, to: bytes.count, by: size) {
-                guard let group = PicoAverage.group(bytes, offset: offset, first: 0, factor: averaging) else {
+                guard let group = PicoAverage.group(bytes, offset: offset, first: 0, factor: averaging, board: board) else {
                     throw StreamFailure.storage("A saved group has invalid ADC quality counts.")
                 }
                 samples += 1
@@ -189,6 +202,8 @@ nonisolated struct StreamRunSegment: Codable, Equatable, Identifiable, Sendable 
     var totalUSBBackpressureUS: UInt64? = nil
     var deadlineReached: Bool? = nil
     var prerun: CalibratedPrerun.Link? = nil
+    var candidatePeakUS: UInt32? = nil
+    var startup: StreamStartupEvidence? = nil
 
     var acquisitionBoard: AcquisitionBoard? = nil
     var board: AcquisitionBoard { acquisitionBoard ?? .picoW }
@@ -216,7 +231,7 @@ nonisolated struct StreamRunSegment: Codable, Equatable, Identifiable, Sendable 
     func rawConfiguredRate(_ requested: Int) -> Double {
         guard let adcClock, let divider256,
               board.accepts(adcClock, divider256, rate: requested) else {
-            return picoAveraging == nil ? Double(requested) : StreamWire.configuredRate(for: requested)
+            return picoAveraging == nil ? Double(requested) : board.rate(requested)
         }
         return board.measuredConfiguration(adcClock, counter: divider256)
     }
@@ -237,9 +252,33 @@ nonisolated struct StreamRun: Codable, Equatable, Identifiable, Sendable {
     var boardLabel: String { settings.acquisitionBoard?.title ?? "Pico W · legacy" }
     var segments: [StreamRunSegment] = []
     var rate_exposure_valid = 0
+    var picoCardOrigin: PicoCardImport.Origin? = nil
     var curveSource: UUID? = nil
     var primaryCurve: UUID? = nil
     var prerunReport: CalibratedPrerun.Report? = nil
+
+    struct DurationChange: Codable, Equatable, Sendable {
+        let changed: Date
+        let segment: UUID
+        let elapsed: Double
+        let previous: Double
+        let target: Double
+
+        var valid: Bool {
+            (0...StreamWire.maxDuration + StreamWire.stopReserveSeconds).contains(elapsed)
+                && (1...StreamWire.maxDuration).contains(previous) && (1...StreamWire.maxDuration).contains(target)
+        }
+    }
+
+    var durationChanges: [DurationChange]? = nil
+    var initialDuration: Double { durationChanges?.first?.previous ?? settings.duration }
+    var validDurationHistory: Bool {
+        guard let changes = durationChanges else { return true }
+        return settings.allowsLiveDurationEdit && (1...256).contains(changes.count)
+            && changes.last?.target == settings.duration
+            && changes.allSatisfy { change in change.valid && segments.contains { $0.id == change.segment } }
+            && zip(changes, changes.dropFirst()).allSatisfy { $0.target == $1.previous }
+    }
 
     var linkedPreruns: [CalibratedPrerun.Link] {
         var seen = Set<CalibratedPrerun.Link>()
@@ -281,6 +320,9 @@ nonisolated struct StreamChunk: Codable, Equatable, Identifiable, Sendable {
     var sha256: String
     var slices: [StreamSlice]
     var picoAveraging: ADCAveraging? = nil
+    var averagingBoard: AcquisitionBoard? = nil
+    var board: AcquisitionBoard { averagingBoard ?? .picoW }
+    var formatVersion: Int { picoAveraging == nil ? 1 : (board == .unoR4 ? 3 : 2) }
 }
 
 nonisolated struct StreamGPIO: Codable, Sendable {
@@ -511,14 +553,13 @@ nonisolated struct StreamProjectStore: Sendable {
         return run
     }
 
-    func makeRun(name: String, description: String, settings: StreamRunSettings) throws -> StreamRun {
+    func makeRun(name: String, description: String, settings: StreamRunSettings, id: UUID = UUID()) throws -> StreamRun {
         try verify()
         let title = try SessionStore.projectName(name)
         let notes = try checkedDescription(description)
         guard settings.valid else { throw StreamFailure.project("The recording settings are invalid.") }
-        var run = StreamRun(project: identity.id, name: title, description: notes, settings: settings)
-        if settings.picoAveraging != nil { run.version = 2 }
-        if settings.board == .unoR4 { run.version = 4 }
+        var run = StreamRun(id: id, project: identity.id, name: title, description: notes, settings: settings)
+        run.version = settings.runVersion
         let parent = try StreamFiles.directory("runs", in: folder, create: true)
         let dir = parent.appendingPathComponent(run.id.uuidString, isDirectory: true)
         guard mkdir(dir.path, 0o700) == 0 else { throw StreamFiles.posix() }
@@ -566,11 +607,11 @@ nonisolated struct StreamProjectStore: Sendable {
         guard run.id == id, run.project == identity.id, run.type == "com.issa26.signal-bench-run",
               (run.version == 3 ? run.curveSource != nil && run.curveSource != run.id && run.primaryCurve != nil
                 && run.status != .recording && !run.isManualDraft :
-                run.version == (run.settings.board == .unoR4 ? 4 : (run.settings.picoAveraging == nil ? 1 : 2)) && run.curveSource == nil && run.primaryCurve == nil),
+                run.version == run.settings.runVersion && run.curveSource == nil && run.primaryCurve == nil),
               run.prerunReport.map({ $0.matches(run) }) ?? true,
               run.linkedPreruns.allSatisfy({ $0.valid && $0.run != id }),
               Set(run.linkedPreruns.map(\.run)).count == run.linkedPreruns.count,
-              run.rate_exposure_valid == 0, run.settings.valid, run.segments.count <= 1_000,
+              run.rate_exposure_valid == 0, run.settings.valid, run.segments.count <= 1_000, run.validDurationHistory,
               (try? SessionStore.projectName(run.name)) == run.name, (try? checkedDescription(run.description)) == run.description,
               Set(run.segments.map(\.id)).count == run.segments.count,
               run.segments.allSatisfy({
@@ -579,6 +620,7 @@ nonisolated struct StreamProjectStore: Sendable {
                   && ($0.prerun.map { $0.valid && $0.run != id && run.settings.purpose == nil &&
                        (run.settings.mode == .calibrated || run.settings.mode == .main) } ?? true)
                   && $0.accountedSamples <= StreamWire.maxSampleBoundary / $0.factor && $0.knownLoss <= $0.accountedSamples
+                  && ($0.startup?.valid(factor: $0.factor) ?? true)
                   && ($0.manualQuality?.fits(savedSamples: $0.savedSamples) ?? true)
                   && ($0.firstDeviceUS ?? 0) <= StreamWire.maxDeviceTimeUS && ($0.finalDeviceUS ?? 0) <= StreamWire.maxDeviceTimeUS
               })
@@ -635,7 +677,8 @@ nonisolated struct StreamProjectStore: Sendable {
                 } else {
                     summary = StreamChunkSummary(try validateChunk(StreamFiles.decoder.decode(StreamChunk.self, from: bytes), url: url))
                 }
-                guard let position = order[summary.segment], summary.picoAveraging == run.settings.picoAveraging else {
+                guard let position = order[summary.segment], summary.picoAveraging == run.settings.picoAveraging,
+                      summary.averagingBoard == (run.settings.board == .unoR4 && summary.picoAveraging != nil ? .unoR4 : nil) else {
                     throw StreamFailure.storage("A raw chunk has no timing segment.")
                 }
                 index.append((position, summary))
@@ -662,9 +705,9 @@ nonisolated struct StreamProjectStore: Sendable {
     }
 
     private func validateChunk(_ item: StreamChunk, url: URL) throws -> StreamChunk {
-        let stride = PicoAverage.stride(item.picoAveraging)
+        let stride = PicoAverage.stride(item.picoAveraging, board: item.board)
         let boundary = StreamWire.maxSampleBoundary / UInt64(item.picoAveraging?.count ?? 1)
-        guard item.version == (item.picoAveraging == nil ? 1 : 2), item.id.uuidString + ".json" == url.lastPathComponent,
+        guard item.version == item.formatVersion, item.id.uuidString + ".json" == url.lastPathComponent,
               (2...Self.chunkLimit).contains(item.bytes), ProfileDigest.valid(item.sha256),
               (1...256).contains(item.slices.count) else {
             throw StreamFailure.storage("A raw chunk index is invalid.")
@@ -733,6 +776,13 @@ nonisolated final class StreamRunWriter: @unchecked Sendable {
     var testAfterIndexPublication: (() throws -> Void)?
     #endif
     private var activeSegment: UUID
+    private var pendingCandidates: [UnoCandidateBlock] = []
+    private var candidateRawChunk: StreamChunk?
+    private let candidateStorage = DispatchQueue(label: "SignalBench.device-candidates", qos: .utility)
+    private let candidateStorageSlots = DispatchSemaphore(value: 2)
+    #if STREAM_TESTING
+    func waitForCandidateStorage() { candidateStorage.sync {} }
+    #endif
     private var lock: StreamRunLock?
     private var segmentIndex: Int { run.segments.count - 1 }
     var segmentDuration: Double { max(0, run.settings.duration - run.segments[segmentIndex].timelineStart) }
@@ -785,6 +835,20 @@ nonisolated final class StreamRunWriter: @unchecked Sendable {
         try store.save(updated)
     }
 
+    func changeDuration(_ change: StreamRun.DurationChange) throws -> StreamRun {
+        guard run.status == .recording, run.settings.allowsLiveDurationEdit, change.valid,
+              change.segment == activeSegment, change.previous == run.settings.duration,
+              (run.durationChanges?.count ?? 0) < 256 else {
+            throw StreamFailure.storage("The recording no longer accepts this duration change.")
+        }
+        var updated = run
+        updated.settings.duration = change.target
+        updated.durationChanges = (updated.durationChanges ?? []) + [change]
+        try store.save(updated)
+        run = updated
+        return updated
+    }
+
     func append(_ frame: StreamFrame) throws {
         guard frame.stream == run.segments[segmentIndex].stream else {
             throw StreamFailure.storage("The frame belongs to a different recording segment.")
@@ -801,7 +865,7 @@ nonisolated final class StreamRunWriter: @unchecked Sendable {
             try store.save(run)
         case .samples:
             let averaging = run.settings.picoAveraging
-            guard frame.payload.count == Int(frame.count) * PicoAverage.stride(averaging) else {
+            guard frame.payload.count == Int(frame.count) * PicoAverage.stride(averaging, board: run.settings.board) else {
                 throw StreamFailure.storage("The reading format does not match the recording.")
             }
             if pendingChunk != nil || slices.count == 256 || data.count + frame.payload.count > StreamProjectStore.chunkLimit {
@@ -831,7 +895,40 @@ nonisolated final class StreamRunWriter: @unchecked Sendable {
             try StreamFiles.publish(record, at: location.appendingPathComponent("\(activeSegment.uuidString)-\(frame.sequence).json"))
             run.segments[segmentIndex].gpioEvents += 1
             run.segments[segmentIndex].manualOutputsReleased = !record.leaseActive && record.directions == 0
-        case .end: break
+        case .end, .health, .candidates: break
+        }
+    }
+
+    func noteStartup(_ evidence: StreamStartupEvidence) throws {
+        run.segments[segmentIndex].startup = evidence
+        try store.save(run)
+    }
+
+    func appendCandidates(_ block: UnoCandidateBlock) {
+        guard run.settings.unoCandidates != nil, pendingCandidates.count < 512 else { return }
+        pendingCandidates.append(block)
+    }
+
+    private func publishCandidates(_ chunk: StreamChunk) {
+        guard let settings = run.settings.unoCandidates, !pendingCandidates.isEmpty,
+              let end = chunk.slices.last.map({ $0.first + UInt64($0.count) }) else { return }
+        let boundaries = Set(chunk.slices.filter { $0.count == Int(UnoCandidateBlock.width) }.map(\.first))
+        let eligible = pendingCandidates.filter { boundaries.contains($0.first) }
+        pendingCandidates.removeAll { $0.end <= end }
+        guard !eligible.isEmpty else { return }
+        // Do not wait for sidecar I/O on the raw writer. The raw checkpoint
+        // has already synced. A skipped sidecar is missing candidate coverage.
+        guard candidateStorageSlots.wait(timeout: .now()) == .success else { return }
+        let archive = UnoCandidateArchive(segment: activeSegment, stream: run.segments[segmentIndex].stream,
+            rawChunk: chunk.id, rawSHA256: chunk.sha256, settings: settings, blocks: eligible)
+        let slots = candidateStorageSlots
+        candidateStorage.async { [store, directory] in
+            defer { slots.signal() }
+            do {
+                try store.verify()
+                let folder = try StreamFiles.directory("device-candidates", in: directory, create: true)
+                try StreamFiles.publish(archive, at: folder.appendingPathComponent(chunk.id.uuidString + ".json"))
+            } catch { }
         }
     }
 
@@ -839,8 +936,10 @@ nonisolated final class StreamRunWriter: @unchecked Sendable {
         guard !slices.isEmpty, let last = slices.last else { return }
         try store.verify()
         let averaging = run.settings.picoAveraging
-        let chunk = pendingChunk ?? StreamChunk(version: averaging == nil ? 1 : 2, segment: activeSegment, bytes: data.count,
-                                               sha256: StreamFiles.sha(data), slices: slices, picoAveraging: averaging)
+        let unoAverage = averaging != nil && run.settings.board == .unoR4
+        let chunk = pendingChunk ?? StreamChunk(version: averaging == nil ? 1 : (unoAverage ? 3 : 2),
+                                               segment: activeSegment, bytes: data.count, sha256: StreamFiles.sha(data),
+                                               slices: slices, picoAveraging: averaging, averagingBoard: unoAverage ? .unoR4 : nil)
         pendingChunk = chunk
         let base = chunks.appendingPathComponent(chunk.id.uuidString)
         let raw = base.appendingPathExtension("bin")
@@ -876,7 +975,7 @@ nonisolated final class StreamRunWriter: @unchecked Sendable {
         // Retrying verifies the same UUID and bytes before counting them.
         try StreamFiles.sync(chunks)
         pendingChunk = nil
-        run.segments[segmentIndex].savedSamples += UInt64(chunk.bytes / PicoAverage.stride(averaging))
+        run.segments[segmentIndex].savedSamples += UInt64(chunk.bytes / PicoAverage.stride(averaging, board: chunk.board))
         run.segments[segmentIndex].accountedSamples = last.first + UInt64(last.count)
         if run.settings.mode == .manual || run.settings.mode == .manualRaw {
             var quality = run.segments[segmentIndex].manualQuality ?? ManualSampleQuality()
@@ -886,10 +985,14 @@ nonisolated final class StreamRunWriter: @unchecked Sendable {
         data.removeAll(keepingCapacity: true)
         slices.removeAll(keepingCapacity: true)
         try store.save(run)
+        if run.settings.unoCandidates != nil {
+            if let earlier = candidateRawChunk { publishCandidates(earlier) }
+            candidateRawChunk = chunk
+        }
     }
 
     @discardableResult
-    func finish(accounting: StreamAccounting, issue: String?, discardUncommitted: Bool = false, deadlineReached: Bool? = nil) throws -> StreamRun {
+    func finish(accounting: StreamAccounting, issue: String?, discardUncommitted: Bool = false, deadlineReached: Bool? = nil, startup: StreamStartupEvidence? = nil) throws -> StreamRun {
         defer { lock = nil }
         if !discardUncommitted { try commit() }
         if discardUncommitted, let pendingChunk,
@@ -898,6 +1001,7 @@ nonisolated final class StreamRunWriter: @unchecked Sendable {
             // failure. The original bytes and UUID must still match.
             try commit()
         }
+        if let committed = candidateRawChunk { publishCandidates(committed) }
         var segment = run.segments[segmentIndex]
         let end = accounting.end
         let reconciled = end != nil && segment.savedSamples == accounting.received
@@ -910,12 +1014,14 @@ nonisolated final class StreamRunWriter: @unchecked Sendable {
         segment.firmwareStopCode = end?.auxiliary
         segment.hostQueuePeak = accounting.hostQueuePeak
         segment.maximumWriterUS = accounting.maximumWriterUS
+        segment.candidatePeakUS = accounting.candidatePeakUS
         segment.maximumPackingUS = accounting.maximumPackingUS
         segment.maximumUSBBackpressureUS = accounting.maximumUSBBackpressureUS
         segment.totalUSBBackpressureUS = accounting.totalUSBBackpressureUS
         segment.unknown = end.map { $0.flags & 1 != 0 } ?? true
         let complete = issue == nil && reconciled && !segment.unknown && segment.knownLoss == 0 && end?.auxiliary == 0
         segment.deadlineReached = deadlineReached
+        if let startup { segment.startup = startup }
         segment.endReason = issue ?? (complete ? "Stop reconciled" :
             end.flatMap { StreamRunSegment.stopReason($0.auxiliary, board: run.settings.board) } ?? "The stream ended before a clean stop.")
         run.segments[segmentIndex] = segment

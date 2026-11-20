@@ -9,7 +9,7 @@ nonisolated enum StreamFailure: LocalizedError {
     }
 }
 
-nonisolated enum StreamFrameKind: UInt8, Sendable { case start = 1, samples, gpio, end }
+nonisolated enum StreamFrameKind: UInt8, Sendable { case start = 1, samples, gpio, end, health, candidates }
 
 nonisolated struct StreamFrame: Sendable {
     var kind: StreamFrameKind
@@ -83,6 +83,9 @@ nonisolated enum StreamWire {
         return Int64(((seconds + stopReserveSeconds) * max(Double(rate), configuredRate(for: rate)) * 2.10).rounded(.up)) + 16 * 1024 * 1024
     }
     static let maxSampleBoundary: UInt64 = 3_605_000_000
+    // The host can discard up to 30 seconds before starting the saved timeline.
+    static let startupReadingReserve: UInt64 = 15_012_288
+    static let maxWireSampleBoundary = maxSampleBoundary + startupReadingReserve
     static let maxDeviceTimeUS = UInt64(Int64.max)
     static let protectedPinMask: UInt32 = 0x007f7fff
 
@@ -142,13 +145,17 @@ nonisolated struct StreamParser {
     private let allowsPacked: Bool
     private let averaging: ADCAveraging?
     private let timing: Bool
+    private let health: Bool
+    private let candidates: Bool
     private let board: AcquisitionBoard
 
-    init(allowsPacked: Bool = false, averaging: ADCAveraging? = nil, timing: Bool = false, board: AcquisitionBoard = .picoW) {
+    init(allowsPacked: Bool = false, averaging: ADCAveraging? = nil, timing: Bool = false, board: AcquisitionBoard = .picoW, health: Bool = false, candidates: Bool = false) {
         self.board = board
         self.allowsPacked = allowsPacked
         self.averaging = averaging
         self.timing = timing || averaging != nil
+        self.health = health && board == .unoR4
+        self.candidates = candidates && board == .unoR4
     }
 
     private func unpackUno(_ packed: Data, count: Int) -> Data {
@@ -225,12 +232,14 @@ nonisolated struct StreamParser {
             let validSize: Bool
             switch kind {
             case .start: validSize = count == 0 && bytes == (averaging == nil ? 8 : 12)
-            case .end: validSize = count == 0 && (timing || board == .unoR4 ? bytes == 32 : (bytes == 8 || bytes == 12))
+            case .end: validSize = count == 0 && (timing || board == .unoR4 ? (bytes == 32 || candidates && bytes == 36) : (bytes == 8 || bytes == 12))
+            case .candidates: validSize = candidates && (8...128).contains(bytes)
+            case .health: validSize = health && bytes == UnoSignalHealth.payloadSize
             case .gpio: validSize = count == 0 && bytes == 16
             case .samples:
                 if let averaging {
-                    validSize = flags == PicoAverage.wireFlag && count == StreamWire.maxSamples / averaging.count
-                        && bytes == Int(count) * PicoAverage.stride(averaging)
+                    validSize = flags == PicoAverage.flag(board) && count == (board == .unoR4 ? 1024 : StreamWire.maxSamples) / averaging.count
+                        && bytes == Int(count) * PicoAverage.stride(averaging, board: board)
                 } else if board == .unoR4 {
                     validSize = (1...UInt32(StreamWire.maxSamples)).contains(count) &&
                         (packedUno ? allowsPacked && count.isMultiple(of: 4) && bytes == Int(count) * 7 / 4 :
@@ -247,20 +256,30 @@ nonisolated struct StreamParser {
             let payload = pending.subdata(in: (offset + StreamWire.headerSize)..<(offset + length))
             let calculated = StreamWire.crc(pending.subdata(in: offset..<(offset + 60)), payload)
             guard calculated == field(UInt32.self, 60) else {
+                // Optional reports do not consume a raw sequence number. Continue
+                // only if the following frame starts at the expected byte boundary.
+                if kind == .candidates || (kind == .health && sawStart && count == 0 && flags == 0) {
+                    let following = offset + length
+                    if pending.count < following + 4 { break }
+                    if pending[following..<(following + 4)].elementsEqual("SBS1".utf8) {
+                        offset = following
+                        continue
+                    }
+                }
                 throw StreamFailure.protocolError("A stream checksum failed. The verified prefix is recoverable.")
             }
             let rawIndex = field(UInt64.self, 32)
             let factor = UInt64(averaging?.count ?? 1)
-            guard rawIndex <= StreamWire.maxSampleBoundary, rawIndex.isMultiple(of: factor) else {
+            guard kind == .health || kind == .candidates || (rawIndex <= StreamWire.maxWireSampleBoundary && rawIndex.isMultiple(of: factor)) else {
                 throw StreamFailure.protocolError("The source conversion boundary is invalid.")
             }
-            if kind == .samples && board == .unoR4 && !packedUno {
+            if kind == .samples && board == .unoR4 && averaging == nil && !packedUno {
                 guard payload.withUnsafeBytes({ bytes in
                     stride(from: 1, to: bytes.count, by: 2).allSatisfy { bytes[$0] & 0x40 == 0 }
                 }) else { throw StreamFailure.protocolError("The Uno sample word has a reserved bit set.") }
             }
-            let index = rawIndex / factor
-            let groups = try averaging.flatMap { kind == .samples ? try PicoAverage.groups(payload, first: index, factor: $0) : nil }
+            let index = kind == .health ? rawIndex : rawIndex / factor
+            let groups = try averaging.flatMap { kind == .samples ? try PicoAverage.groups(payload, first: index, factor: $0, board: board) : nil }
             try consume(.init(kind: kind, sequence: field(UInt32.self, 12),
                               stream: field(UInt64.self, 16), boot: field(UInt64.self, 24),
                               index: index, timeUS: field(UInt64.self, 40),
@@ -302,8 +321,25 @@ nonisolated struct StreamAccounting {
     var factor: UInt64 { UInt64(averaging?.count ?? 1) }
     var hostQueuePeak: Int?
     var maximumWriterUS: UInt64?
+    private let healthEnabled: Bool
+    private let candidateEnabled: Bool
+    private var lastSampleSequence: UInt32?
+    private var contiguousRawFirst: UInt64 = 0
+    private(set) var candidateBlock: UnoCandidateBlock?
+    private(set) var candidatePeakUS: UInt32?
+    private(set) var rejectedCandidateBlocks = 0
+    private var healthStride: UInt64 = 0
+    private var lastRawStart: UInt64?
+    private(set) var health: UnoSignalHealth?
+    private(set) var healthReports: UInt64 = 0
+    private(set) var rejectedHealthReports: UInt64 = 0
+    var healthOpportunities: UInt64 {
+        healthStride == 0 ? 0 : nextIndex * factor / (healthStride * UnoSignalHealth.block)
+    }
 
-    init(stream: UInt64, channel: Int, rate: Int, averaging: ADCAveraging? = nil, board: AcquisitionBoard = .picoW) {
+    init(stream: UInt64, channel: Int, rate: Int, averaging: ADCAveraging? = nil, board: AcquisitionBoard = .picoW, health: Bool = false, candidates: Bool = false) {
+        self.candidateEnabled = candidates && board == .unoR4
+        self.healthEnabled = health && board == .unoR4
         self.board = board
         self.stream = stream
         self.channel = channel
@@ -322,11 +358,37 @@ nonisolated struct StreamAccounting {
     }
 
     mutating func accept(_ frame: StreamFrame) throws {
-        guard end == nil, frame.stream == stream, frame.sequence == nextSequence, frame.boot != 0, (1...StreamWire.maxDeviceTimeUS).contains(frame.timeUS) else {
+        guard end == nil, frame.stream == stream, frame.boot != 0, (1...StreamWire.maxDeviceTimeUS).contains(frame.timeUS) else {
             throw StreamFailure.protocolError("Stream identity or sequence did not match.")
         }
         if let boot, frame.boot != boot { throw StreamFailure.protocolError("The recording device restarted during acquisition.") }
+        if frame.kind == .candidates {
+            guard candidateEnabled, boot != nil else { throw StreamFailure.protocolError("Unexpected Device Candidates frame.") }
+            guard frame.sequence == lastSampleSequence, frame.index == lastRawStart,
+                  frame.timeUS == lastDataTimeUS, candidateBlock?.first != frame.index,
+                  let decoded = UnoCandidateBlock(frame: frame, lowerBound: contiguousRawFirst) else {
+                rejectedCandidateBlocks += 1
+                return
+            }
+            candidateBlock = decoded
+            return
+        }
+        if frame.kind == .health {
+            guard healthEnabled, boot != nil else { throw StreamFailure.protocolError("Unexpected signal health frame.") }
+            guard healthStride > 0, frame.sequence == nextSequence &- 1, frame.index == lastRawStart,
+                  frame.timeUS == lastDataTimeUS, frame.index / UnoSignalHealth.block % healthStride == healthStride - 1,
+                  health?.firstConversion != frame.index,
+                  let summary = UnoSignalHealth(frame: frame) else {
+                rejectedHealthReports &+= 1
+                return
+            }
+            health = summary
+            healthReports += 1
+            return
+        }
+        guard frame.sequence == nextSequence else { throw StreamFailure.protocolError("Stream sequence did not match.") }
         switch frame.kind {
+        case .health, .candidates: return
         case .start:
             guard frame.payload.count == (averaging == nil ? 8 : 12) else {
                 throw StreamFailure.protocolError("Invalid stream start payload.")
@@ -339,42 +401,50 @@ nonisolated struct StreamAccounting {
                 throw StreamFailure.protocolError("The device reported an unexpected sample configuration.")
             }
             configuredRate = board.measuredConfiguration(clock, counter: divider) / Double(factor)
+            if healthEnabled {
+                let ticks = UInt64(divider) * UnoSignalHealth.block
+                healthStride = (UInt64(clock) + ticks / 2) / ticks
+            }
             boot = frame.boot
             startTimeUS = frame.timeUS
             lastDataTimeUS = frame.timeUS
         case .samples:
             guard boot != nil, (1...UInt32(StreamWire.maxSamples)).contains(frame.count),
                   frame.index >= nextIndex, frame.timeUS >= lastDataTimeUS,
-                  frame.index <= StreamWire.maxSampleBoundary / factor - UInt64(frame.count),
-                  frame.flags == (averaging == nil ? 0 : PicoAverage.wireFlag), frame.auxiliary == 0,
+                  frame.index <= StreamWire.maxWireSampleBoundary / factor - UInt64(frame.count),
+                  frame.flags == (averaging == nil ? 0 : PicoAverage.flag(board)), frame.auxiliary == 0,
                   averaging.map({ _ in frame.groups?.count == Int(frame.count) }) ?? true else {
                 throw StreamFailure.protocolError("Sample ranges, timing or acquisition flags did not reconcile.")
             }
+            if frame.index > nextIndex { contiguousRawFirst = frame.index }
+            lastSampleSequence = frame.sequence
             knownLoss += frame.index - nextIndex
             nextIndex = frame.index + UInt64(frame.count)
             received += UInt64(frame.count)
+            lastRawStart = UInt64(frame.count) * factor == UnoSignalHealth.block ? frame.index * factor : nil
             lastDataIndex = nextIndex
             lastDataTimeUS = frame.timeUS
             if firstDMAAnchor == nil { firstDMAAnchor = (nextIndex, frame.timeUS) }
         case .gpio:
+            lastRawStart = nil
             guard frame.payload.count == 16 else { throw StreamFailure.protocolError("Invalid GPIO payload.") }
             let directions = StreamWire.read(UInt32.self, frame.payload, at: 0)
             let levels = StreamWire.read(UInt32.self, frame.payload, at: 4)
             let outputs = StreamWire.read(UInt32.self, frame.payload, at: 8)
             let lease = StreamWire.read(UInt32.self, frame.payload, at: 12)
             guard let startTimeUS, frame.timeUS >= startTimeUS, frame.auxiliary == 0, frame.flags == 0,
-                  frame.index <= StreamWire.maxSampleBoundary / factor, directions & ~board.gpioMask == 0,
+                  frame.index <= StreamWire.maxWireSampleBoundary / factor, directions & ~board.gpioMask == 0,
                   levels & ~board.gpioMask == 0, outputs & ~directions == 0, lease <= 1,
                   lease == 1 || directions == 0 else { throw StreamFailure.protocolError("Invalid GPIO evidence.") }
         case .end:
-            guard [8, 12, 32].contains(frame.payload.count), boot != nil, frame.timeUS >= lastDataTimeUS, frame.index >= nextIndex,
-                  frame.index <= StreamWire.maxSampleBoundary / factor, frame.flags & ~1 == 0, frame.auxiliary <= 4,
+            guard ([8, 12, 32].contains(frame.payload.count) || candidateEnabled && frame.payload.count == 36), boot != nil, frame.timeUS >= lastDataTimeUS, frame.index >= nextIndex,
+                  frame.index <= StreamWire.maxWireSampleBoundary / factor, frame.flags & ~1 == 0, frame.auxiliary <= 4,
                   StreamWire.read(UInt64.self, frame.payload, at: 0) == received else {
                 throw StreamFailure.protocolError("The final sample counters did not reconcile.")
             }
             let peak = frame.payload.count >= 12 ? StreamWire.read(UInt32.self, frame.payload, at: 8) : nil
             guard peak.map({ $0 <= 12 }) ?? true else { throw StreamFailure.protocolError("Invalid firmware queue depth.") }
-            if frame.payload.count == 32 {
+            if frame.payload.count >= 32 {
                 maximumPackingUS = StreamWire.read(UInt32.self, frame.payload, at: 12)
                 let longest = StreamWire.read(UInt64.self, frame.payload, at: 16)
                 let total = StreamWire.read(UInt64.self, frame.payload, at: 24)
@@ -383,6 +453,7 @@ nonisolated struct StreamAccounting {
                 }
                 maximumUSBBackpressureUS = longest
                 totalUSBBackpressureUS = total
+                if frame.payload.count == 36 { candidatePeakUS = StreamWire.read(UInt32.self, frame.payload, at: 32) }
             }
             knownLoss += frame.index - nextIndex
             nextIndex = frame.index

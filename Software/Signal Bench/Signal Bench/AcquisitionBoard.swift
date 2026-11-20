@@ -11,22 +11,26 @@ nonisolated enum AcquisitionBoard: String, Codable, CaseIterable, Identifiable, 
     var maxCode: UInt16 { UInt16(1 << bits) - 1 }
     var nominalReferenceMV: Int { self == .picoW ? 3300 : 5000 }
     var gpioMask: UInt32 { self == .picoW ? StreamWire.protectedPinMask : 0x1ffc }
-    var benchRates: Set<Int> { self == .picoW ? Set(StreamWire.rates) : [100_000, 250_000, 500_000] }
+    static let unoRates = 10_000...250_000
+    var selectableRates: Set<Int> {
+        self == .picoW ? Set(StreamWire.rates) : [10_000, 25_000, 50_000, 100_000, 125_000, 200_000, 250_000]
+    }
+    var liveRange: ClosedRange<Int> { self == .picoW ? StreamWire.customRates : Self.unoRates }
+    func supportsSavedRate(_ rate: Int) -> Bool { liveRange.contains(rate) || (self == .unoR4 && rate == 500_000) }
+    private func unoPeriod(_ rate: Int) -> UInt32 { UInt32((48_000_000 + rate / 2) / rate) }
 
     func analogPin(_ channel: Int) -> String { self == .picoW ? "GP\(26 + channel)" : "A\(channel)" }
     func digitalPin(_ pin: Int) -> String { self == .picoW ? "GP\(pin)" : "D\(pin)" }
     func rate(_ requested: Int) -> Double {
-        self == .picoW ? StreamWire.configuredRate(for: requested) : Double(requested)
-    }
-    func standardRate(_ requested: Int, channel: Int) -> Bool {
-        if self == .picoW { return StreamWire.ordinaryRate(requested, channel: channel) }
-        return false
+        guard self == .unoR4 else { return StreamWire.configuredRate(for: requested) }
+        guard supportsSavedRate(requested) else { return Double(requested) }
+        return 48_000_000 / Double(unoPeriod(requested))
     }
     func sampleCode(_ word: UInt16) -> UInt16 { word & maxCode }
     func accepts(_ clock: UInt32, _ counter: UInt32, rate: Int) -> Bool {
         guard clock == StreamWire.adcClock else { return false }
         if self == .picoW { return counter == StreamWire.divider(for: rate, clock: clock) }
-        return benchRates.contains(rate) && rate > 0 && counter > 0 && UInt64(counter) * UInt64(rate) == UInt64(clock)
+        return supportsSavedRate(rate) && counter == unoPeriod(rate)
     }
     func measuredConfiguration(_ clock: UInt32, counter: UInt32) -> Double {
         self == .picoW ? StreamWire.configuredRate(clock: clock, divider: counter) : Double(clock) / Double(counter)

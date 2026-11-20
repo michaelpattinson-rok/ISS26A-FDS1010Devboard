@@ -211,7 +211,7 @@ nonisolated enum TrainingLabels {
                 let split = try partitions[label.group] ?? partition(project, group: label.group)
                 partitions[label.group] = split
                 let actual = label.category == .unknown ? DatasetGroup.review : split
-                let file = label.id.uuidString + (label.runSettings.picoAveraging == nil ? ".bin" : ".avg1")
+                let file = label.id.uuidString + (label.runSettings.picoAveraging == nil ? ".bin" : (label.runSettings.board == .unoR4 ? ".avg14" : ".avg1"))
                 try StreamFiles.publish(words, at: windows.appendingPathComponent(file))
                 try index.item(Item(label: label, partition: actual, waveform: "waveforms/" + file))
                 try csv[actual]?.line(features(words, label: label))
@@ -238,7 +238,7 @@ nonisolated enum TrainingLabels {
     private static func features(_ data: Data, label: TrainingLabel) throws -> String {
         let start = Int(label.event.first - label.context.first)
         if let factor = label.runSettings.picoAveraging {
-            let groups = try PicoAverage.groups(data, first: label.context.first, factor: factor)
+            let groups = try PicoAverage.groups(data, first: label.context.first, factor: factor, board: label.runSettings.board)
             let event = groups[start..<(start + Int(label.event.count))]
             let valid = event.compactMap(\.mean)
             let center = ProfileAnalyzer.median(valid) ?? 0

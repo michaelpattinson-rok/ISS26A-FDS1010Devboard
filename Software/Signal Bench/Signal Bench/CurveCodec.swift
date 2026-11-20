@@ -46,7 +46,7 @@ nonisolated enum CurveCodec {
 
     static func reading(_ bytes: UnsafeRawBufferPointer, at offset: Int, factor: ADCAveraging?, board: AcquisitionBoard = .picoW) throws -> CurveReading {
         if let factor {
-            guard let group = PicoAverage.group(bytes, offset: offset, first: 0, factor: factor) else { throw fault }
+            guard let group = PicoAverage.group(bytes, offset: offset, first: 0, factor: factor, board: board) else { throw fault }
             return .init(value: group.mean, exact: true, adcErrors: group.adcErrors, low: group.lowRail, high: group.highRail)
         }
         let word = UInt16(littleEndian: bytes.loadUnaligned(fromByteOffset: offset, as: UInt16.self))
@@ -60,7 +60,7 @@ nonisolated enum CurveCodec {
     // Zero high bit means literal payload. One high bit means an exact anchor sum and Float32 slope.
     static func fit(_ data: Data, spans: [Range<Int>], factor: ADCAveraging?, tolerance: Double,
                     preserve: [Range<Int>], board: AcquisitionBoard = .picoW) throws -> Data {
-        let stride = PicoAverage.stride(factor)
+        let stride = PicoAverage.stride(factor, board: board)
         return try data.withUnsafeBytes { bytes in
             let values = try (0..<(bytes.count / stride)).map { try reading(bytes, at: $0 * stride, factor: factor, board: board).value }
             var output = Data()
@@ -114,7 +114,7 @@ nonisolated enum CurveCodec {
 
     static func visit(_ bytes: Data, modeled: Bool, count: Int, spans: [Range<Int>], factor: ADCAveraging?, board: AcquisitionBoard = .picoW,
                       _ body: (Int, CurveReading) throws -> Void) throws {
-        let stride = PicoAverage.stride(factor)
+        let stride = PicoAverage.stride(factor, board: board)
         try bytes.withUnsafeBytes { buffer in
             guard modeled || buffer.count == count * stride else { throw fault }
             var offset = 0

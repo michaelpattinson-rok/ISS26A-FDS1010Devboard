@@ -1,2 +1,4 @@
 8984e64cf4a7e63feebb27c31522367229aaa27e015ed0bea156cf0fd8f9d65d  Signal Bench UNO R4 Minima 1.0.bin
 6f0ace4927c9e70dc0f01eaa844bd48394325fc9ea2e580fe78ad4aa4bbb8108  Signal Bench Pico W 1.10.uf2
+32bbab25a67e49761e3532b7e67a3e2b442e9f59914569949abf02eb2c1f5c39  Signal Bench Pico W 1.11 microSD.uf2
+84f34717fb5483f65408f3c3fc4834995673005a80d475547e439ca75d3da9b8  Signal Bench UNO R4 Minima 1.3.bin

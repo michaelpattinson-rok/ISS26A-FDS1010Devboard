@@ -20,6 +20,20 @@ nonisolated struct ProjectArchiveRequest: Identifiable, Sendable {
     var folders: [URL] { grants.map(\.url) }
 }
 
+nonisolated struct PicoCardRequest: Identifiable, Sendable {
+    let id = UUID()
+    let projectID: UUID
+    let runs: [PicoCardImport.Preview]
+    let issues: [String]
+    fileprivate let grants: [StreamFolderGrant]
+
+    #if STREAM_TESTING
+    static func sample(runs: [PicoCardImport.Preview], issues: [String]) -> Self {
+        .init(projectID: UUID(), runs: runs, issues: issues, grants: [])
+    }
+    #endif
+}
+
 @MainActor
 final class StreamingBench: ObservableObject {
     enum Dialog: String, Identifiable { case new; var id: String { rawValue } }
@@ -77,10 +91,9 @@ final class StreamingBench: ObservableObject {
     @Published private(set) var board: AcquisitionBoard = .picoW
     @Published var firmware = ""
     @Published private(set) var customRates = false
-    @Published private(set) var picoAveragingAvailable = false
+    @Published private(set) var deviceAveragingAvailable = false
     @Published private(set) var deviceRates: Set<Int> = []
     @Published private(set) var diagnosticChannels: Set<Int> = []
-    @Published private(set) var benchRatesEnabled = false
     @Published var sampleRate = StreamWire.rate
     @Published var adcAveraging: ADCAveraging?
     @Published var waveformStyle = WaveformStyle.envelope
@@ -94,7 +107,6 @@ final class StreamingBench: ObservableObject {
         board = value
         sampleRate = StreamWire.rate
         adcAveraging = nil
-        benchRatesEnabled = false
         connectionEpoch = UUID()
         invalidateSetup()
         refreshPorts()
@@ -102,20 +114,14 @@ final class StreamingBench: ObservableObject {
 
     var canSwitchBoard: Bool { !connected && !connecting && !busy && !pendingRecording && draftDecision == nil && !quitting }
 
-    func setBenchRates(_ enabled: Bool) {
-        guard !busy, project != nil else { return }
-        benchRatesEnabled = enabled
-        if !enabled && !board.standardRate(sampleRate, channel: 0) { sampleRate = StreamWire.rate }
-    }
-
     func rateAvailable(_ rate: Int, channel: Int = 0, averaging: ADCAveraging? = nil) -> Bool {
-        streaming && (averaging == nil || picoAveragingAvailable) && (deviceRates.contains(rate) || (customRates && StreamWire.customRates.contains(rate)))
+        streaming && (averaging == nil || deviceAveragingAvailable) && (deviceRates.contains(rate) || (customRates && board.liveRange.contains(rate)))
             && diagnosticChannels.contains(channel)
-            && (board.standardRate(rate, channel: channel) || benchRatesEnabled)
+            && board.liveRange.contains(rate)
     }
     #if STREAM_TESTING
     func setDeviceCapabilitiesForTest(averaging: Bool = false) {
-        picoAveragingAvailable = averaging
+        deviceAveragingAvailable = averaging
         customRates = true
         deviceRates = Set(StreamWire.rates)
         diagnosticChannels = [0, 1, 2]
@@ -128,9 +134,11 @@ final class StreamingBench: ObservableObject {
 
     func setJobsForLayout(_ values: [ProjectJob]) { jobs = values }
     func setTimelineForTest(_ request: RunTimelineRequest) { timeline = request }
+    func setQualityForLayout(_ id: UUID, progress: WaveformOverview.Progress) { qualityProgress[id] = progress }
     #endif
 
     @Published var streaming = false
+    @Published private(set) var supportsDeviceCandidates = false
     @Published var connecting = false
     @Published var connected = false
     @Published var status = "Disconnected"
@@ -144,6 +152,64 @@ final class StreamingBench: ObservableObject {
     @Published var preview = LiveStreamPreview()
     @Published var projectDialog: Dialog?
     @Published var archiveRequest: ProjectArchiveRequest?
+    @Published var picoCardRequest: PicoCardRequest?
+    @Published private(set) var reservedGPIO: UInt32 = 0
+    private var picoSDState: String?
+    var controllableGPIO: UInt32 { board.gpioMask & ~reservedGPIO }
+
+    func choosePicoCard() {
+        guard let project, !busy, !quitting, verifyProjectAccess() else { return }
+        let picker = NSOpenPanel()
+        picker.title = "Choose a Pico Card or Recording Files"
+        picker.prompt = "Check Recordings"
+        picker.canChooseDirectories = true
+        picker.canChooseFiles = true
+        picker.allowsMultipleSelection = true
+        guard picker.runModal() == .OK else { return }
+        let grants = picker.urls.map(StreamFolderGrant.init)
+        let projectID = project.identity.id
+        performWithProgress("Checking Pico card") { progress in
+            let files = try PicoCardImport.candidates(grants.map(\.url))
+            var runs: [PicoCardImport.Preview] = []
+            var issues: [String] = []
+            var seen = Set<UUID>()
+            for (index, file) in files.enumerated() {
+                try Task.checkCancellation()
+                do {
+                    let run = try PicoCardImport.preview(file)
+                    if seen.insert(run.id).inserted { runs.append(run) }
+                    else { issues.append("\(file.lastPathComponent): duplicate ID in this selection.") }
+                } catch is CancellationError { throw CancellationError() }
+                catch { issues.append("\(file.lastPathComponent): \(error.localizedDescription)") }
+                progress(Double(index + 1) / Double(files.count))
+            }
+            return PicoCardRequest(projectID: projectID, runs: runs, issues: issues, grants: grants)
+        } completion: { [self] request in
+            guard self.project?.identity.id == request.projectID else { return }
+            picoCardRequest = request
+        }
+    }
+
+    func importPicoCard(_ request: PicoCardRequest, entries: [PicoCardImport.Preview],
+                        wiring: PicoCardImport.Wiring, date: Date?) {
+        guard let project, project.identity.id == request.projectID, !entries.isEmpty,
+              !busy, !quitting, verifyProjectAccess() else { return }
+        let projectGrant = folderAccess
+        performWithProgress("Importing Pico recordings", failure: { [weak self] in self?.reload() }) { progress in
+            try withExtendedLifetime((request, projectGrant)) {
+                var last: UUID?
+                for (index, entry) in entries.enumerated() {
+                    try Task.checkCancellation()
+                    last = try PicoCardImport.publish(entry, in: project, wiring: wiring, approximateStart: date)
+                    progress(Double(index + 1) / Double(entries.count))
+                }
+                return last
+            }
+        } completion: { [self] id in
+            reload(id)
+            notice = "Pico recordings are available in the Run Library."
+        }
+    }
     @Published var operation: String?
     @Published private(set) var operationProgress: Double?
     @Published private(set) var projectReviewRunning = false
@@ -167,7 +233,7 @@ final class StreamingBench: ObservableObject {
     @Published private(set) var calibratedContinuation: StreamRun?
     private var prerunEpoch: UUID?
     private var setupRevision = UUID()
-    @Published private(set) var qualityProgress: [UUID: Double] = [:]
+    @Published private(set) var qualityProgress: [UUID: WaveformOverview.Progress] = [:]
     @Published private(set) var qualityIssues: [UUID: String] = [:]
     @Published private(set) var qualityRevisions: [UUID: UUID] = [:]
     private var qualityDone = Set<UUID>()
@@ -188,7 +254,12 @@ final class StreamingBench: ObservableObject {
         let (frames, continuation) = AsyncStream.makeStream(of: LiveStreamPreview.self, bufferingPolicy: .bufferingNewest(1))
         previewConsumer = Task { [weak self] in
             for await frame in frames {
-                if self?.recording == true { self?.preview = frame }
+                if let self, self.recording {
+                    self.preview = frame
+                    if !self.stopping, self.status == "Settling", frame.settlingRemaining == nil, frame.received > 0 {
+                        self.status = "Recording"
+                    }
+                }
             }
         }
         return StreamRecorder { [weak self] event in
@@ -299,19 +370,24 @@ final class StreamingBench: ObservableObject {
             let entries = try next.list()
             let defaults = try next.defaults()
             try Task.checkCancellation()
-            return (next, entries, defaults, Result { try ProjectJobFiles.load(next) })
-        } completion: { [self] next, entries, defaults, restoredJobs in
+            let paused = Set(entries.compactMap { item -> UUID? in
+                guard let folder = try? next.runDirectory(item.id),
+                      StreamFiles.exists(folder.appendingPathComponent(WaveformOverview.pauseMarker)) else { return nil }
+                return item.id
+            })
+            return (next, entries, defaults, Result { try ProjectJobFiles.load(next) }, paused)
+        } completion: { [self] next, entries, defaults, restoredJobs, paused in
             stopProjectJobs()
             jobs = (try? restoredJobs.get()) ?? []
             libraryLoad?.cancel()
             resetPostRunQueue()
+            qualityPaused = paused
             folderAccess = grant
             project = next
             self.defaults = defaults
             if previousProject != next.identity.id {
                 closeTimeline()
                 page = .overview
-                benchRatesEnabled = false
                 sampleRate = StreamWire.rate
                 adcAveraging = nil
             }
@@ -372,6 +448,7 @@ final class StreamingBench: ObservableObject {
         profiles = []
         attempts = []
         selection = nil
+        diagnosisSource = nil
         studySelection = nil
         invalidateSetup()
         draftDecision = nil
@@ -439,7 +516,11 @@ final class StreamingBench: ObservableObject {
         guard !busy, let project else { return }
         do {
             try project.saveDefaults(value)
-            if defaults.afterRecording != value.afterRecording { resetPostRunQueue() }
+            if defaults.afterRecording != value.afterRecording {
+                let paused = qualityPaused
+                resetPostRunQueue()
+                qualityPaused = paused
+            }
             defaults = value
             schedulePostRun()
         }
@@ -546,7 +627,7 @@ final class StreamingBench: ObservableObject {
             return
         }
         guard rateAvailable(settings.nominalRate, channel: settings.channel, averaging: settings.picoAveraging) else {
-            notice = "This rate or channel is unavailable. Check the board firmware and Bench Rates setting."
+            notice = "The connected firmware does not support this rate, input or averaging factor."
             return
         }
         if settings.mode == .calibrated, settings.purpose == nil || settings.prerunPlan != nil {
@@ -563,7 +644,7 @@ final class StreamingBench: ObservableObject {
         }
         var configured = settings
         configured.acquisitionBoard = board
-        configured.benchSampling = board.standardRate(settings.nominalRate, channel: settings.channel) ? nil : true
+        if configured.usesStartupDelay { configured.startupDelaySeconds = defaults.startupDelay }
         let selectedSettings = configured
         if let setup = settings.profile?.setup ?? settings.calibrationSetup ?? settings.bench?.setup,
            !setup.matchesFirmware(firmware, board: board) {
@@ -615,6 +696,14 @@ final class StreamingBench: ObservableObject {
     }
 
     func resume(_ run: StreamRun) {
+        guard run.picoCardOrigin == nil else {
+            notice = "Start a new run on the Pico to record more data."
+            return
+        }
+        guard run.settings.mainsHum == nil else {
+            notice = "Repeat this step in the 60 Hz Test to keep the comparison on one capture."
+            return
+        }
         if run.settings.mode == .calibrated {
             prepareCalibratedContinuation(run)
             return
@@ -680,10 +769,24 @@ final class StreamingBench: ObservableObject {
     }
 
     private func begin(_ run: StreamRun, in store: StreamProjectStore, continuationPrerun: CalibratedPrerun.Link? = nil) {
+        if let qualityTask {
+            let epoch = connectionEpoch
+            let revision = setupRevision
+            qualityWorker?.cancel()
+            afterWork(qualityTask) { [weak self] in
+                guard let self else { return }
+                guard self.project?.identity.id == store.identity.id, self.streaming, epoch == self.connectionEpoch,
+                      revision == self.setupRevision else {
+                    self.notice = "The recording setup changed. Check it and start again."
+                    self.reload()
+                    return
+                }
+                self.begin(run, in: store, continuationPrerun: continuationPrerun)
+            }
+            return
+        }
         pauseProjectJob()
-        qualityWorker?.cancel()
         qualityDone.remove(run.id)
-        qualityPaused.remove(run.id)
         qualityIssues[run.id] = nil
         if run.settings.mode != .calibrated {
             invalidateSetup()
@@ -706,6 +809,20 @@ final class StreamingBench: ObservableObject {
         status = "Preparing recording"
         power = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: "Saving Signal Bench acquisition")
         recorder.start(store: store, run: run, continuationPrerun: continuationPrerun)
+    }
+
+    @Published private(set) var changingLiveDuration = false
+
+    func changeLiveDuration(_ seconds: Double, finishIfElapsed: Bool = false) {
+        guard recording, !stopping, !changingLiveDuration, let run = current else { return }
+        changingLiveDuration = true
+        recorder.changeDuration(run: run.id, to: seconds, finishIfElapsed: finishIfElapsed) { [weak self] issue in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.changingLiveDuration = false
+                if let issue { self.notice = issue }
+            }
+        }
     }
 
     func stop() {
@@ -768,6 +885,37 @@ final class StreamingBench: ObservableObject {
         }
     }
 
+    @Published var diagnosisSource: DiagnosisSource?
+
+    struct DiagnosisSource {
+        let run: UUID
+        let range: StreamSelection
+    }
+
+    func openDiagnosisSource(_ run: StreamRun, range: StreamSelection) {
+        guard project?.identity.id == run.project, !recording else { return }
+        diagnosisSource = .init(run: run.id, range: range)
+        selection = run.id
+        page = .library
+    }
+
+    func compareMainsHum(in run: StreamRun, segment: UUID, start: Double) async throws -> MainsHumCapture.Reading {
+        guard let project, project.identity.id == run.project, !busy else {
+            throw StreamFailure.storage("Open the source Project and finish recording before comparing runs.")
+        }
+        let grant = folderAccess
+        let worker = Task.detached(priority: .utility) {
+            try withExtendedLifetime(grant) {
+                let current = try project.openRun(run.id)
+                return try MainsHumCapture.compare(.init(store: project, run: current), segmentID: segment, start: start)
+            }
+        }
+        let reading = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+        try Task.checkCancellation()
+        guard self.project?.identity.id == run.project, !busy else { throw CancellationError() }
+        return reading
+    }
+
     func readRecordingWaveform(_ range: StreamSelection, density: Double?, limit: Int) async throws -> StudioPlot? {
         guard recording, let current, let project else { return nil }
         let grant = folderAccess
@@ -801,10 +949,11 @@ final class StreamingBench: ObservableObject {
 
     func openLiveTimeline(_ tool: RunTimelineRequest.Tool, replacing: Bool = false) {
         guard recording, let run = current, !openingTimeline, !quitting else { return }
-        if let timeline, timeline.runID == run.id && (!replacing || timeline.frozen != nil) { return }
+        guard !timelineSaving else { return }
+        if let timeline, timeline.runID == run.id, timeline.tool == tool, !replacing { return }
         guard !timelineHasChanges else { notice = "Save or discard the current flag or note before opening another editor."; return }
-        if tool == .note {
-            timeline = .init(runID: run.id, tool: .note, frozen: nil)
+        if tool != .flag {
+            timeline = .init(runID: run.id, tool: tool, frozen: nil)
             return
         }
         let instant = DispatchTime.now().uptimeNanoseconds
@@ -838,7 +987,7 @@ final class StreamingBench: ObservableObject {
         timeline = nil
     }
 
-    func timelineLoad(for request: RunTimelineRequest) async throws -> RunTimelineContent {
+    func timelineLoad(for request: RunTimelineRequest, waveform: Bool = true) async throws -> RunTimelineContent {
         guard let project else { throw StreamFailure.storage("Open the recording’s Project first.") }
         let live = recording && current?.id == request.runID
         let grant = folderAccess
@@ -848,10 +997,10 @@ final class StreamingBench: ObservableObject {
                 let reader = StreamRangeReader(store: project, run: run)
                 let entries = try RunTimeline.entries(reader, finished: !live, resolving: run.curveSource == nil)
                 if run.curveSource != nil { return RunTimelineContent(reader: reader, entries: entries, duration: 0, overview: nil) }
-                guard !live, request.frozen == nil else { return RunTimelineContent(reader: reader, entries: entries, duration: 0, overview: nil) }
+                guard waveform else { return RunTimelineContent(reader: reader, entries: entries, duration: 0, overview: nil) }
                 let prepared = try reader.prepared()
                 return RunTimelineContent(reader: prepared, entries: entries, duration: try prepared.duration(),
-                                          overview: try? WaveformOverview.read(prepared))
+                                          overview: live ? nil : try? WaveformOverview.read(prepared))
             }
         }
         return try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
@@ -885,7 +1034,7 @@ final class StreamingBench: ObservableObject {
     }
     func release() { recorder.releaseOutputs() }
     func pin(_ number: Int, _ operation: UInt8) {
-        guard (0..<32).contains(number), board.gpioMask & (1 << number) != 0 else { return }
+        guard (0..<32).contains(number), controllableGPIO & (1 << number) != 0 else { return }
         recorder.pin(number, operation: operation)
     }
 
@@ -897,8 +1046,13 @@ final class StreamingBench: ObservableObject {
 
     private func receive(_ event: StreamRecorderEvent) {
         switch event {
+        case .deviceCandidates(let available):
+            supportsDeviceCandidates = available
         case .streamCapabilities(let averaging):
-            picoAveragingAvailable = averaging
+            deviceAveragingAvailable = averaging
+        case let .sdCapabilities(mask, state):
+            reservedGPIO = mask
+            picoSDState = state
         case .connecting:
             connecting = true
             status = "Checking firmware"
@@ -913,6 +1067,7 @@ final class StreamingBench: ObservableObject {
             connectionEpoch = UUID()
             invalidateSetup()
             if pending { status = "Finite capture pending" }
+            else if let picoSDState, ["preparing", "countdown", "recording", "saving"].contains(picoSDState) { status = "Pico card recorder active" }
             else if identity.hasSuffix("-bench") { status = "Bench firmware detected" }
             else { status = capable ? "Connected" : "Streaming firmware required" }
             if pending { notice = "Recover the Pico’s pending finite capture in Signal Bench 1.3 before streaming." }
@@ -920,8 +1075,11 @@ final class StreamingBench: ObservableObject {
             connected = false
             connecting = false
             streaming = false
+            supportsDeviceCandidates = false
             customRates = false
-            picoAveragingAvailable = false
+            reservedGPIO = 0
+            picoSDState = nil
+            deviceAveragingAvailable = false
             deviceRates = []
             diagnosticChannels = []
             firmware = ""
@@ -931,7 +1089,10 @@ final class StreamingBench: ObservableObject {
             refreshPorts()
         case .started(let run):
             current = run
-            status = "Recording"
+            status = (run.settings.startupDelaySeconds ?? 0) > 0 ? "Settling" : "Recording"
+            if preview.received > 0 { status = "Recording" }
+        case .durationChanged(let run):
+            if recording, current?.id == run.id { current = run }
         case .preview(let data):
             preview = data
         case .stopping(let message):
@@ -954,7 +1115,7 @@ final class StreamingBench: ObservableObject {
                 selection = run.id
                 reload(run.id)
                 if run.isManualDraft { presentDraft(run); return }
-                page = run.settings.bench == nil ? .library : .study
+                page = run.settings.mainsHum != nil ? .diagnosis : (run.settings.bench == nil ? .library : .study)
                 if closeAfterDrain {
                     if !timelineSaving, verifyProjectAccess() { finishProjectClose() }
                     return
@@ -1021,7 +1182,7 @@ final class StreamingBench: ObservableObject {
     }
 
     func export(toFolderFor store: StreamProjectStore, title: String, progress: String,
-                onSelection: () -> Void = {},
+                onSelection: () -> Void = {}, verifiedZIP: Bool = false,
                 write: @escaping @Sendable (URL, @Sendable (Double) -> Void) throws -> URL) {
         guard !busy, !quitting, project?.identity.id == store.identity.id, verifyProjectAccess() else { return }
 
@@ -1050,7 +1211,7 @@ final class StreamingBench: ObservableObject {
             }
         } completion: { [self, grant] url in
             withExtendedLifetime(grant) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-            notice = "Exported \(url.lastPathComponent)."
+            notice = verifiedZIP ? "Exported and verified \(url.lastPathComponent)." : "Exported \(url.lastPathComponent)."
         }
     }
 
@@ -1060,6 +1221,7 @@ final class StreamingBench: ObservableObject {
     }
 
     func performWithProgress<T: Sendable>(_ title: String, projectReview: Bool = false,
+                                          failure: (() -> Void)? = nil,
                                           action: @escaping @Sendable (@escaping @Sendable (Double) -> Void) async throws -> T,
                                           completion: @escaping (T) -> Void) {
         guard !busy, !quitting else { return }
@@ -1071,12 +1233,14 @@ final class StreamingBench: ObservableObject {
         let id = UUID()
         operationID = id
         let task = Task.detached(priority: .utility) { [weak self] in
-            try await action { [weak self] progress in
+            let value = try await action { [weak self] progress in
                 Task { @MainActor [weak self] in
                     guard let self, self.operationID == id else { return }
                     self.operationProgress = max(self.operationProgress ?? 0, min(1, progress))
                 }
             }
+            if projectReview { try Task.checkCancellation() }
+            return value
         }
         cancel = { task.cancel() }
         work = Task {
@@ -1093,9 +1257,13 @@ final class StreamingBench: ObservableObject {
             switch result {
             case .success(let value): completion(value)
             case .failure(is CancellationError):
+                failure?()
                 notice = projectReview && pendingRecording ? "Local AI review stopped for recording. Run the review again when recording ends." : "Cancelled."
             case .failure(let error):
-                if verifyProjectAccess() { notice = error.localizedDescription }
+                if verifyProjectAccess() {
+                    notice = error.localizedDescription
+                    failure?()
+                }
             }
         }
     }
@@ -1116,7 +1284,7 @@ final class StreamingBench: ObservableObject {
             } else {
                 input = try CurveDelivery.pin(CurveStore.open(project, run: reader.run, id: spec.curve), selection: selection)
             }
-            let estimate = Int64(input.recordedReadings) * (spec.action == .csv ? 140 : Int64(PicoAverage.stride(reader.run.settings.picoAveraging)))
+            let estimate = Int64(input.recordedReadings) * (spec.action == .csv ? 140 : Int64(PicoAverage.stride(reader.run.settings.picoAveraging, board: reader.run.settings.board)))
             return ProjectJob(project: project.identity.id, kind: .waveformCurve, input: input,
                               name: try SessionStore.projectName(name), estimatedBytes: estimate,
                               needsDestination: grant != nil, curve: spec)
@@ -1171,6 +1339,14 @@ final class StreamingBench: ObservableObject {
             return job
         } completion: { [weak self] job in
             self?.approveJobs([job], destination: grant)
+        }
+    }
+
+    func exportSelectedRuns(_ ids: [UUID], projectID: UUID, name: String) {
+        guard let project, project.identity.id == projectID else { return }
+        export(toFolderFor: project, title: "Save Run ZIP", progress: "Exporting and verifying runs", verifiedZIP: true) {
+            folder, update in
+            try RunBatchArchive.export(ids, in: project, named: name, to: folder, progress: update)
         }
     }
 
@@ -1342,6 +1518,7 @@ final class StreamingBench: ObservableObject {
             return
         }
         guard jobTask == nil, !busy, let next = jobs.last(where: { $0.state == .queued }) else { return }
+        if qualityTask != nil { qualityWorker?.cancel(); return }
         let control = ProjectJobControl()
         let destination = jobDestinations[next.id], access = folderAccess
         var state = next
@@ -1352,7 +1529,6 @@ final class StreamingBench: ObservableObject {
             _ = updateJob(state, in: project)
             return
         }
-        qualityWorker?.cancel()
         jobID = next.id
         jobControl = control
         jobClosureState = nil
@@ -1419,19 +1595,34 @@ final class StreamingBench: ObservableObject {
     }
 
     func pausePostRun(_ id: UUID) {
-        qualityPaused.insert(id)
-        if qualityProgress[id] != nil { qualityWorker?.cancel() }
+        do {
+            guard let project else { return }
+            try project.verify()
+            let marker = try project.runDirectory(id).appendingPathComponent(WaveformOverview.pauseMarker)
+            if try !StreamFiles.isPresent(marker) { try StreamFiles.publish(Data(), at: marker) }
+            qualityPaused.insert(id)
+            if qualityProgress[id] != nil { qualityWorker?.cancel() }
+        } catch { notice = "Could not save the pause. " + error.localizedDescription }
     }
 
     func retryPostRun(_ id: UUID) {
-        qualityPaused.remove(id)
-        qualityDone.remove(id)
-        qualityIssues[id] = nil
-        schedulePostRun(preferred: id)
+        do {
+            guard let project else { return }
+            try project.verify()
+            let marker = try project.runDirectory(id).appendingPathComponent(WaveformOverview.pauseMarker)
+            if try StreamFiles.isPresent(marker) {
+                try FileManager.default.removeItem(at: marker)
+                try StreamFiles.sync(marker.deletingLastPathComponent())
+            }
+            qualityPaused.remove(id)
+            qualityDone.remove(id)
+            qualityIssues[id] = nil
+            schedulePostRun(preferred: id)
+        } catch { notice = "Could not resume the summary. " + error.localizedDescription }
     }
 
     private func schedulePostRun(preferred: UUID? = nil) {
-        guard !busy, !pendingRecording, jobTask == nil, !quitting, !needsProjectAccess, qualityTask == nil, let project else { return }
+        guard !busy, !pendingRecording, jobTask == nil, !quitting, !closeAfterDrain, !needsProjectAccess, qualityTask == nil, let project else { return }
         let pending = runs.compactMap(\.run).filter {
             !$0.isManualDraft && $0.curveSource == nil && $0.status != .recording && !$0.segments.isEmpty &&
                 !qualityDone.contains($0.id) && !qualityPaused.contains($0.id) && qualityIssues[$0.id] == nil
@@ -1441,13 +1632,13 @@ final class StreamingBench: ObservableObject {
         let projectID = project.identity.id
         let grant = folderAccess
         let option = defaults.afterRecording ?? .quality
-        qualityProgress[id] = 0
+        qualityProgress[id] = .init()
         let worker = Task.detached(priority: .utility) { [weak self] in
             try withExtendedLifetime(grant) {
                 let reader = try StreamRangeReader(store: project, run: run).prepared()
                 let existing = try? WaveformOverview.read(reader)
                 let saved = existing?.hasAverages == true && existing?.hasRailBreakdown == true ? existing : nil
-                let overview = try saved ?? WaveformOverview.build(reader) { fraction in
+                let overview = try saved ?? WaveformOverview.build(reader, resume: true) { fraction in
                     Task { @MainActor [weak self] in
                         guard self?.project?.identity.id == projectID, self?.qualityProgress[id] != nil else { return }
                         self?.qualityProgress[id] = fraction
@@ -1457,6 +1648,11 @@ final class StreamingBench: ObservableObject {
                 try Task.checkCancellation()
                 let calibrated = run.settings.mode == .calibrated && run.settings.purpose == nil
                 if option == .noise || option == .profile || calibrated {
+                    let count = overview.minutes.reduce(UInt64(0)) { $0 + $1.samples }
+                    Task { @MainActor [weak self] in
+                        guard self?.project?.identity.id == projectID, self?.qualityProgress[id] != nil else { return }
+                        self?.qualityProgress[id] = .init(stage: .analyzing, scanned: count, total: count)
+                    }
                     let results = try StreamStudio.analyses(reader)
                     if option == .noise && !results.contains(where: {
                         $0.analyzer == PostRunAnalysis.noiseAnalyzer && $0.sourceHash == overview.sourceHash
@@ -1502,11 +1698,12 @@ final class StreamingBench: ObservableObject {
                 case .failure(is CancellationError):
                     qualityRevisions[id] = UUID()
                 case .failure(let error):
-                    if !worker.isCancelled { qualityIssues[id] = error.localizedDescription; qualityRevisions[id] = UUID() }
+                    qualityIssues[id] = error.localizedDescription
+                    qualityRevisions[id] = UUID()
                 }
             }
             if quitting { finishQuitIfIdle() }
-            else { schedulePostRun() }
+            else { scheduleProjectJobs(); schedulePostRun() }
         }
     }
 }

@@ -5,6 +5,7 @@ import Foundation
 nonisolated struct StreamSelection: Codable, Equatable, Sendable {
     var lower: Double
     var upper: Double
+    func containsTime(_ time: Double) -> Bool { time >= lower && time < upper }
     var valid: Bool { (0...86_400).contains(lower) && (lower...86_400).contains(upper) && upper > lower }
 }
 
@@ -114,11 +115,11 @@ nonisolated struct StreamRangeReader: Sendable {
                     let left = max(lo, slice.first)
                     let right = min(hi, slice.first + UInt64(slice.count))
                     guard right > left else { continue }
-                    let size = PicoAverage.stride(segment.picoAveraging)
+                    let size = PicoAverage.stride(segment.picoAveraging, board: segment.board)
                     let start = slice.byteOffset + size * Int(left - slice.first)
                     let count = Int(right - left)
                     let payload = data.subdata(in: start..<(start + size * count))
-                    let groups = try segment.picoAveraging.map { try PicoAverage.groups(payload, first: left, factor: $0) }
+                    let groups = try segment.picoAveraging.map { try PicoAverage.groups(payload, first: left, factor: $0, board: segment.board) }
                     let words = groups.map { groups in
                         var projected = Data(capacity: count * 2)
                         for group in groups { StreamWire.put(PicoAverage.projectedWord(group), into: &projected) }
@@ -340,9 +341,10 @@ nonisolated enum StreamStudio {
         var lastTime = selection.lower
         var previous: (segment: UUID, next: UInt64)?
         let span = selection.upper - selection.lower
-        let dotSelection = dotPercent.map {
-            WaveformDotSelection(percent: $0, limit: dotLimit, possible: Int((span * rate).rounded(.up)))
-        }
+        let possible = Int(StreamRangeReader.sampleBoundary(span * rate))
+        let dotSelection = dotPercent.map { WaveformDotSelection(percent: $0, limit: dotLimit, possible: possible) }
+        let maximumCode = board.maxCode
+        let columnCount = Double(count)
         var dots: [SIMD2<Float>] = []
         var firstDot: SIMD2<Float>?
         if let dotSelection { dots.reserveCapacity(dotSelection.capacity) }
@@ -360,7 +362,7 @@ nonisolated enum StreamStudio {
                     total += 1
                     let time = first + Double(i) / rate
                     let position = (time - selection.lower) / span
-                    let x = min(count - 1, max(0, Int(position * Double(count))))
+                    let x = min(count - 1, max(0, Int(position * columnCount)))
                     let group = groups?[i]
                     if showSamples {
                         exact.append(.init(segment: segment, index: index + UInt64(i), time: time, word: word, group: group, board: board))
@@ -372,7 +374,7 @@ nonisolated enum StreamStudio {
                         if group.lowRail + group.highRail > 0 { clipped += 1; rails[x] = true }
                         if group.mean == nil { unavailable += 1; continue }
                     } else if word & 0x8000 != 0 { bad += 1; unavailable += 1; faults[x] = true; continue }
-                    let value = board.sampleCode(word)
+                    let value = word & maximumCode
                     let precise = group?.mean ?? Double(value)
                     if let dotSelection, dots.count < dotSelection.limit {
                         if dotSelection.includes(index + UInt64(i)) {
@@ -384,7 +386,7 @@ nonisolated enum StreamStudio {
                     sums[x] += precise
                     counts[x] += 1
                     bins[Int(value)] += 1
-                    if group == nil && (value == 0 || value == board.maxCode) {
+                    if group == nil && (value == 0 || value == maximumCode) {
                         clipped += 1
                         rails[x] = true
                         if value == 0 { lowRails[x] = true; lowCount += 1 }
@@ -410,7 +412,7 @@ nonisolated enum StreamStudio {
                                 nominalSampledSeconds: sampledSeconds, selectionSeconds: span,
                                 lowRail: lowCount, highRail: highCount)
         return .init(columns: minima.indices.map { minima[$0] == .max ? nil : minima[$0]...maxima[$0] }, breaks: breaks, stats: stats, faults: faults, rails: rails, gaps: gaps, samples: exact,
-                     lowRails: lowRails, highRails: highRails, dots: dotSelection == nil ? nil : .init(values: dots),
+                     lowRails: lowRails, highRails: highRails, dots: dotSelection == nil ? nil : .init(values: dots, eligibleReadings: valid),
                      means: zip(sums, counts).map { $1 == 0 ? nil : Double($0) / Double($1) })
     }
 
@@ -552,7 +554,8 @@ nonisolated struct StreamPulseBlocks {
 
     mutating func finish(_ output: (CaptureRecord) throws -> Void) throws {
         guard let anchor, !samples.isEmpty else { return }
-        let start = (anchor.segment.firstDeviceUS ?? 0) + UInt64(Double(anchor.reference.first) * 1_000_000 / anchor.configuredRate)
+        let originalFirst = anchor.reference.first + (anchor.segment.startup?.originalReadingOffset ?? 0)
+        let start = (anchor.segment.firstDeviceUS ?? 0) + UInt64(Double(originalFirst) * 1_000_000 / anchor.configuredRate)
         let count = samples.count
         var metadata: [String: String] = ["boot_id": String(format: "%016llx", anchor.segment.boot ?? 0),
             "sample_hz": String(anchor.segment.picoAveraging == nil ? anchor.rate : anchor.recordedNominal), "configured_hz": String(anchor.configuredRate), "start_us": String(start),
@@ -592,9 +595,9 @@ nonisolated enum StreamExporter {
 
         // Used only to present an order of magnitude before reading raw data.
         func estimatedBytes(samples: UInt64, averaging: ADCAveraging?, pico: ADCAveraging? = nil,
-                            hasExclusions: Bool = false) -> Double {
+                            hasExclusions: Bool = false, board: AcquisitionBoard = .picoW) -> Double {
             if let pico {
-                if writesBinary { return Double(samples) * Double(PicoAverage.stride(pico)) }
+                if writesBinary { return Double(samples) * Double(PicoAverage.stride(pico, board: board)) }
                 return Double(samples) * (self == .zip && hasExclusions ? 300 : 150)
             }
             return switch self {
@@ -607,7 +610,7 @@ nonisolated enum StreamExporter {
     }
 
     static func export(_ reader: StreamRangeReader, name: String, selection: StreamSelection,
-                       format: Format, includeAnalyses: Bool, destination: URL? = nil,
+                       format: Format, includeAnalyses: Bool, destination: URL? = nil, scoped: Bool = false,
                        progress: (Double) -> Void = { _ in }, checkpoint: () throws -> Void = {},
                        beforePublish: () throws -> Void = {}) throws -> URL {
         guard selection.valid else { throw StreamFailure.storage("Choose a nonempty time range.") }
@@ -622,9 +625,33 @@ nonisolated enum StreamExporter {
         let stage = try StreamFiles.directory(".export-" + UUID().uuidString, in: root, create: true)
         defer { try? FileManager.default.removeItem(at: stage) }
         let reader = try reader.prepared()
-        let includeAnalyses = includeAnalyses || format.includesRunInfo
+        let includeAnalyses = !scoped && (includeAnalyses || format.includesRunInfo)
         let archiveFile = stage.appendingPathComponent(".run.zip")
+        let payload = try format.includesRunInfo ? StreamFiles.directory("contents", in: stage, create: true) : stage
         let archive = try format.includesRunInfo ? RunExportZIP(archiveFile, date: reader.run.created) : nil
+        try writeContents(reader, selection: selection, format: format, includeAnalyses: includeAnalyses,
+                          stage: payload, archive: archive, scoped: scoped, progress: progress, checkpoint: checkpoint)
+        if let archive {
+            try checkpoint()
+            try archive.finish()
+            try archive.verify(checkpoint: checkpoint) { progress(0.98 + 0.019 * $0) }
+        }
+        try Task.checkCancellation()
+        try reader.store.verify()
+        try StreamFiles.sync(stage)
+        try beforePublish()
+        let completed = archive == nil ? stage : archiveFile
+        guard renamex_np(completed.path, target.path, UInt32(RENAME_EXCL)) == 0 else { throw StreamFiles.posix() }
+        do { try StreamFiles.sync(root) }
+        catch { throw StreamFailure.storage("The export was written as \(target.lastPathComponent), but the destination could not confirm it was saved. Check the folder before retrying.") }
+        progress(1)
+        return target
+    }
+
+    static func writeContents(_ reader: StreamRangeReader, selection: StreamSelection, format: Format,
+                              includeAnalyses: Bool, stage: URL, archive: RunExportZIP?, scoped: Bool = false,
+                              progress: (Double) -> Void, checkpoint: () throws -> Void) throws {
+        guard selection.valid else { throw StreamFailure.storage("Choose a nonempty time range.") }
         if format == .averaged, reader.run.settings.adcAveraging == nil, reader.run.settings.picoAveraging == nil {
             throw StreamFailure.storage("This run has no averaging preset.")
         }
@@ -647,7 +674,7 @@ nonisolated enum StreamExporter {
             })
         let byID = Dictionary(uniqueKeysWithValues: coverage.segments.enumerated().map { ($0.element.id, $0.offset) })
         var outputs: [StreamAnalysisOutput] = []
-        if let annotations {
+        if !scoped, let annotations {
             let file = try StreamOutput(stage.appendingPathComponent("annotations.json"))
             try file.write(StreamFiles.encoder.encode(annotations))
             outputs.append(try file.finish(file: "annotations.json", type: "signalbench.annotations"))
@@ -671,7 +698,9 @@ nonisolated enum StreamExporter {
         let prefixes = Dictionary(uniqueKeysWithValues: reader.run.segments.map {
             ($0.id, Data("\($0.id.uuidString),\($0.stream),".utf8))
         })
-        try StreamFiles.publish(reader.run, at: stage.appendingPathComponent("run.json"))
+        if !scoped {
+            try StreamFiles.publish(reader.run, at: stage.appendingPathComponent("run.json"))
+        }
         var total: UInt64 = 0
         var visited: UInt64 = 0
         var reported = 0
@@ -714,7 +743,7 @@ nonisolated enum StreamExporter {
         outputs.append(try index.finish(file: "ranges.jsonl", type: "signalbench.raw-ranges"))
         outputs.append(contentsOf: try samples.finish(checkpoint: checkpoint))
         progress(0.9)
-        let timeline = try RunTimeline.entries(reader, finished: true)
+        let timeline = scoped ? [] : try RunTimeline.entries(reader, finished: true)
         if !timeline.isEmpty {
             let events = try StreamOutput(stage.appendingPathComponent("timeline.jsonl"))
             for entry in timeline { try events.item(entry) }
@@ -730,7 +759,7 @@ nonisolated enum StreamExporter {
         }
         try StreamFiles.publish(outputs, at: stage.appendingPathComponent("files.json"))
         let runFolder = try reader.store.runDirectory(reader.run.id)
-        if format.includesRunInfo {
+        if format.includesRunInfo, !scoped {
             let moments = try BenchStudy.moments(reader)
             if !moments.isEmpty {
                 let file = try StreamOutput(stage.appendingPathComponent("bench-moments.jsonl"))
@@ -754,7 +783,7 @@ nonisolated enum StreamExporter {
             }
         }
         let gpio = runFolder.appendingPathComponent("gpio")
-        if StreamFiles.exists(gpio) {
+        if !scoped, StreamFiles.exists(gpio) {
             try StreamFiles.directory(gpio)
             let destination = try StreamFiles.directory("gpio", in: stage, create: true)
             for file in try FileManager.default.contentsOfDirectory(at: gpio, includingPropertiesForKeys: nil) where file.pathExtension == "json" {
@@ -808,7 +837,7 @@ nonisolated enum StreamExporter {
             }
         }
         if let archive {
-            let linked = reader.run.linkedPreruns
+            let linked = scoped ? [] : reader.run.linkedPreruns
             let leases = try linked.map { link in
                 do { return try ProjectReview.ReadLease(reader.store.runDirectory(link.run)) }
                 catch { throw StreamFailure.storage("Prerun \(link.run.uuidString) is unavailable. " + error.localizedDescription) }
@@ -821,31 +850,18 @@ nonisolated enum StreamExporter {
                     progress(0.9 + 0.08 * (Double(index) + fraction) / Double(linked.count))
                 }
             }
-            try addZipTables(stage: stage, reader: reader, coverage: coverage, timeline: timeline, annotations: annotations)
-            let stagedFiles = try addSidecars(to: archive, in: stage, excluding: archiveFile, checkpoint: checkpoint)
+            try addZipTables(stage: stage, reader: reader, coverage: coverage, timeline: timeline, annotations: scoped ? nil : annotations)
+            let stagedFiles = try addSidecars(to: archive, in: stage, checkpoint: checkpoint)
             let alreadyListed = Set(stagedFiles.map(\.file))
             outputs.removeAll { alreadyListed.contains($0.file) }
             outputs.append(contentsOf: stagedFiles)
             let guide = try StreamOutput(member: archive.entry("Main.md"))
-            try guide.write(Data(exportGuide(reader.run, coverage: coverage, files: outputs).utf8))
+            try guide.write(Data(exportGuide(reader.run, coverage: coverage, files: outputs, scoped: scoped).utf8))
             outputs.append(try guide.finish(file: "Main.md", type: "signalbench.export-guide"))
             let manifest = try StreamOutput(member: archive.entry("manifest.json"))
             try manifest.write(StreamFiles.encoder.encode(ZipManifest(run: reader.run.id, files: outputs.sorted { $0.file < $1.file })))
             _ = try manifest.finish(file: "manifest.json", type: "signalbench.zip-manifest")
-            try checkpoint()
-            try archive.finish()
-            try archive.verify(checkpoint: checkpoint) { progress(0.98 + 0.019 * $0) }
         }
-        try Task.checkCancellation()
-        try reader.store.verify()
-        try StreamFiles.sync(stage)
-        try beforePublish()
-        let completed = archive == nil ? stage : archiveFile
-        guard renamex_np(completed.path, target.path, UInt32(RENAME_EXCL)) == 0 else { throw StreamFiles.posix() }
-        do { try StreamFiles.sync(root) }
-        catch { throw StreamFailure.storage("The export was written as \(target.lastPathComponent), but the destination could not confirm it was saved. Check the folder before retrying.") }
-        progress(1)
-        return target
     }
 
     private struct ZipManifest: Encodable {
@@ -855,19 +871,19 @@ nonisolated enum StreamExporter {
         let files: [StreamAnalysisOutput]
     }
 
-    private static func addSidecars(to archive: RunExportZIP, in folder: URL, excluding archiveFile: URL,
+    private static func addSidecars(to archive: RunExportZIP, in folder: URL,
                                     prefix: String = "", checkpoint: () throws -> Void) throws -> [StreamAnalysisOutput] {
         try StreamFiles.directory(folder)
         let items = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
         var results: [StreamAnalysisOutput] = []
-        for url in items.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) where url.path != archiveFile.path {
+        for url in items.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             try Task.checkCancellation()
             try checkpoint()
             var info = stat()
             guard lstat(url.path, &info) == 0 else { throw StreamFiles.posix() }
             let entry = prefix + url.lastPathComponent
             if info.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR) {
-                results.append(contentsOf: try addSidecars(to: archive, in: url, excluding: archiveFile,
+                results.append(contentsOf: try addSidecars(to: archive, in: url,
                                                             prefix: entry + "/", checkpoint: checkpoint))
             } else {
                 let fd = Darwin.open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
@@ -889,7 +905,7 @@ nonisolated enum StreamExporter {
         return results
     }
 
-    private static func exportGuide(_ run: StreamRun, coverage: StreamExportSelection, files: [StreamAnalysisOutput]) -> String {
+    private static func exportGuide(_ run: StreamRun, coverage: StreamExportSelection, files: [StreamAnalysisOutput], scoped: Bool = false) -> String {
         let settings = run.settings
         let factor = settings.factor
         let raw = run.segments.first?.rawConfiguredRate(settings.nominalRate) ?? settings.rawConfiguredRate
@@ -899,7 +915,7 @@ nonisolated enum StreamExporter {
         let clipped = coverage.segments.reduce(UInt64(0)) { $0 + $1.quality.railSamples }
         let sampled = coverage.segments.reduce(0.0) { $0 + Double($1.quality.samples) / $1.sampleRate }
         let unknown = coverage.segments.contains(where: \.unknownBoundary)
-        let readingKind = factor == 1 ? "Original ADC words" : "AVG1 groups with exact sums and quality counts"
+        let readingKind = factor == 1 ? "Original ADC words" : (settings.board == .unoR4 ? "AVG14 groups with exact sums and quality counts" : "AVG1 groups with exact sums and quality counts")
         let description = run.description.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n")
         var lines = ["# " + run.name, "", description, "", "## Recording", "",
             "- Run ID: \(run.id)", "- Board: \(run.boardLabel)", "- ADC: \(settings.board.bits) bits, nominal \(settings.board.nominalReferenceMV) mV reference", "- Mode: \(settings.mode.rawValue)", "- Channel: \(settings.board.analogPin(settings.channel))",
@@ -917,6 +933,30 @@ nonisolated enum StreamExporter {
             "- quality.csv gives saved, missing, clipped and error readings by segment.",
             "- exclusions.csv describes approved masks when a cleaned CSV is included.",
             "- manifest.json records SHA-256 and uncompressed size for the other archive members.", ""]
+        if let changes = run.durationChanges {
+            lines += ["## Recording duration", "", "- Original target: \(run.initialDuration) s",
+                      "- Final target: \(settings.duration) s"]
+            for change in changes {
+                lines.append("- At \(change.elapsed) s: \(change.previous) s to \(change.target) s (segment \(change.segment))")
+            }
+            lines.append("")
+        }
+        if let seconds = settings.startupDelaySeconds, seconds > 0 {
+            lines += ["## Startup delay", "", "- Requested settling time: \(seconds) s",
+                      "- timing.csv records the original device reading offset and received readings skipped per segment.",
+                      "- Sample indices are relative to the saved segment. Add the offset for the original device reading index.", ""]
+        }
+        if let card = run.picoCardOrigin {
+            let start = card.approximateStart.map { $0.ISO8601Format() } ?? "Unknown"
+            lines += ["## Pico Card", "", "- Pico ID: \(card.device)", "- Firmware: \(card.firmware)",
+                      "- Card digest: \(card.digest)", "- Declared input: \(card.input.rawValue)",
+                      "- Approximate start: \(start)", ""]
+        }
+        if let test = settings.mainsHum {
+            lines += ["## 60 Hz Test", "", "- Test ID: \(test.test)",
+                      "- Mac power (operator confirmed): \(test.step.power)",
+                      "- Condition: \(test.step.title)", ""]
+        }
         if factor > 1 {
             lines.append("Averaged reading indices map to original conversion ranges by multiplying by \(factor). Individual conversions inside an averaged group are unavailable. A flagged group has no usable mean.")
         } else if let legacy = settings.adcAveraging {
@@ -926,7 +966,7 @@ nonisolated enum StreamExporter {
         let names = files.map(\.file).sorted()
         lines.append(contentsOf: names.prefix(200).map { "- `" + $0 + "`" })
         if names.count > 200 { lines.append("- The manifest lists all \(names.count) files.") }
-        if !run.linkedPreruns.isEmpty {
+        if !scoped, !run.linkedPreruns.isEmpty {
             lines += ["", "## Dark prerun evidence", "", "Each linked directory contains the full prerun, including for a measurement range export."]
             for link in run.linkedPreruns { lines.append("- `calibration/\(link.run.uuidString)/`") }
         }
@@ -942,11 +982,11 @@ nonisolated enum StreamExporter {
             _ = try output.finish(file: name, type: "signalbench.export-csv")
         }
         let segments = Dictionary(uniqueKeysWithValues: reader.run.segments.map { ($0.id, $0) })
-        try table("timing.csv", "segment,stream,first_reading,end_reading_exclusive,raw_configured_hz,recorded_hz,average_factor,first_device_us,final_device_us,unknown_boundary,pico_stop_code,reason") { output in
+        try table("timing.csv", "segment,stream,first_reading,end_reading_exclusive,raw_configured_hz,recorded_hz,average_factor,first_device_us,final_device_us,unknown_boundary,pico_stop_code,reason,original_device_reading_offset,startup_received_readings_skipped") { output in
             for row in coverage.segments {
                 guard let segment = segments[row.id] else { continue }
                 let raw = segment.rawConfiguredRate(reader.run.settings.nominalRate)
-                try output.line("\(row.id),\(row.stream),\(row.input.first),\(row.input.end),\(raw),\(row.sampleRate),\(segment.factor),\(segment.firstDeviceUS.map(String.init) ?? ""),\(segment.finalDeviceUS.map(String.init) ?? ""),\(row.unknownBoundary),\(segment.firmwareStopCode.map(String.init) ?? ""),\(ReviewFiles.csv(segment.displayEndReason ?? ""))")
+                try output.line("\(row.id),\(row.stream),\(row.input.first),\(row.input.end),\(raw),\(row.sampleRate),\(segment.factor),\(segment.firstDeviceUS.map(String.init) ?? ""),\(segment.finalDeviceUS.map(String.init) ?? ""),\(row.unknownBoundary),\(segment.firmwareStopCode.map(String.init) ?? ""),\(ReviewFiles.csv(segment.displayEndReason ?? "")),\(segment.startup?.originalReadingOffset ?? 0),\(segment.startup?.discardedReadings ?? 0)")
             }
         }
         try table("quality.csv", "segment,saved_readings,missing_readings,readings_with_adc_error,readings_with_clipping,source_adc_errors,source_low_rails,source_high_rails,sampled_seconds,unknown_boundary") { output in

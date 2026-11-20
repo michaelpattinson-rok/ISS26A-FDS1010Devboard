@@ -8,22 +8,34 @@ nonisolated struct ProjectReview: Sendable {
     let store: StreamProjectStore
     let runs: [StreamRun]
     private let byID: [UUID: StreamRun]
+    private let selections: [UUID: StreamSelection]
+    private let limits: [UUID: ReviewRange]
+    private let pinned: [UUID: ProjectJob.Input]
 
-    init(store: StreamProjectStore, approved: [UUID]) throws {
+    init(store: StreamProjectStore, approved: [UUID], ranges: [UUID: ReviewRange] = [:]) throws {
         try store.verify()
         guard !approved.isEmpty, approved.count <= 10_000,
-              Set(approved).count == approved.count else { throw ReviewWorkerError.limit }
+              Set(approved).count == approved.count, Set(ranges.keys).isSubset(of: Set(approved)) else { throw ReviewWorkerError.limit }
         var snapshots: [StreamRun] = []
+        var selections: [UUID: StreamSelection] = [:]
+        var proofs: [UUID: ProjectJob.Input] = [:]
         for id in approved {
             try Task.checkCancellation()
             let run = try store.openRun(id)
-            guard run.curveSource == nil, !run.isManualDraft, !run.segments.isEmpty else {
+            guard run.status != .recording, run.curveSource == nil, !run.isManualDraft, !run.segments.isEmpty else {
                 throw ReviewWorkerError.invalid("Choose saved or interrupted recordings with samples.")
             }
+            let input = try StreamRangeReader(store: store, run: run).prepared()
+            let selection = try ReviewWorker.selection(ranges[id], reader: input)
+            selections[id] = selection
+            proofs[id] = try ProjectJob.Input.pin(input, selection: selection)
             snapshots.append(run)
         }
         self.store = store
         runs = snapshots
+        self.selections = selections
+        limits = ranges
+        pinned = proofs
         byID = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.id, $0) })
     }
 
@@ -33,6 +45,9 @@ nonisolated struct ProjectReview: Sendable {
         let status: StreamRun.Status
         let mode: String
         let rate: Int
+        let selection: StreamSelection
+        let approvedSamples: ReviewRange?
+        let segmentIDs: [UUID]
     }
 
     struct BatchRow: Encodable {
@@ -61,6 +76,7 @@ nonisolated struct ProjectReview: Sendable {
         let peakMinute: Int?
         let sourceHash: String
         let evidence: String
+        let baselineNoiseCodes: Double?
 
         init(_ overview: WaveformOverview, cached: Bool = false) {
             sampledSeconds = overview.minutes.reduce(0) { $0 + $1.sampled }
@@ -71,6 +87,8 @@ nonisolated struct ProjectReview: Sendable {
             rails = overview.minutes.reduce(0) { $0 + $1.clipped }
             adcErrors = overview.minutes.reduce(0) { $0 + $1.errors }
             peakMinute = overview.minutes.max(by: { $0.clipped < $1.clipped }).flatMap { $0.clipped == 0 ? nil : $0.id }
+            let levels = overview.minutes.compactMap(\.noise)
+            baselineNoiseCodes = ProfileAnalyzer.median(levels)
             sourceHash = overview.sourceHash
             evidence = cached ? "Saved quality summary matched the current index" : "Fresh SHA-256 verified quality scan"
         }
@@ -82,7 +100,7 @@ nonisolated struct ProjectReview: Sendable {
     It summarizes original samples, ADC errors, rails, and coverage. A peak minute is a place to inspect.
     Use metadata for timing segment IDs. Waveform ranges use original sample indices, with an exclusive end.
     Use quality for a page of per-minute detail. Gaps and unknown time are separate from saved samples.
-    Use batch_compare for up to four full runs with the same two filter settings, or compare for a specific range.
+    Use batch_compare for up to four approved ranges with the same two filter settings, or compare for a specific range.
     Each comparison keeps raw data, approved exclusions, filter context, and timing fixed between the two settings.
     To inspect affected samples, use compare or pulse_decisions with pagination. Review proposals require an operator to stage.
     Use interruption to distinguish firmware buffer pressure, link loss and unconfirmed coverage. Use find_clipping for an exact short range and find_gaps for indexed gaps. Use spectra for shared eligible spectral windows and export_estimate for storage estimates.
@@ -99,7 +117,9 @@ nonisolated struct ProjectReview: Sendable {
         case .list_runs:
             return runs.dropFirst(request.page.lowerBound).prefix(request.page.count).map {
                 RunRow(id: $0.id, name: String($0.name.prefix(140)), status: $0.status,
-                       mode: $0.settings.mode.rawValue, rate: $0.settings.nominalRate)
+                       mode: $0.settings.mode.rawValue, rate: $0.settings.nominalRate, selection: selections[$0.id]!,
+                       approvedSamples: limits[$0.id],
+                       segmentIDs: limits[$0.id].map { [$0.segment] } ?? Array($0.segments.prefix(16).map(\.id)))
             }
         case .read_review_guide:
             return Self.guide
@@ -119,9 +139,10 @@ nonisolated struct ProjectReview: Sendable {
                     let input = StreamRangeReader(store: store, run: run)
                     let result: any Encodable
                     var proposals: [ReviewProposal] = []
-                    if comparing {
-                        let comparison = ReviewRequest(operation: .compare, run: run.id, settings: request.settings,
-                                                       reference: request.reference, limit: 1)
+                    if comparing || limits[run.id] != nil {
+                        let comparison = ReviewRequest(operation: comparing ? .compare : .quality, run: run.id,
+                                                       settings: request.settings, reference: request.reference,
+                                                       limit: 5, visibleSelection: selections[run.id])
                         result = try ReviewWorker(store: store).execute(comparison) { kind, item in
                             if kind == "proposal", let proposal = item as? ReviewProposal { proposals.append(proposal) }
                         }
@@ -155,23 +176,34 @@ nonisolated struct ProjectReview: Sendable {
             let leases = try ids.map(readLease)
             defer { withExtendedLifetime(leases) {} }
             let draft = try ReviewJobDraft.make(request, readers: snapshots.map { StreamRangeReader(store: store, run: $0) },
-                                                 approved: Set(runs.map(\.id)))
+                                                 approved: Set(runs.map(\.id)), scopes: selections,
+                                                 partial: Set(limits.keys))
             try output("job_draft", draft)
             return draft
         case .fixture_templates:
-            let approved = Set(runs.map(\.id))
+            let approved = Set(runs.map(\.id)).subtracting(limits.keys)
             return try FixtureTemplateStudy.templates(store).filter {
                 $0.training.allSatisfy { approved.contains($0.run) } && ($0.noise.map { approved.contains($0.run) } ?? true)
             }.dropFirst(request.page.lowerBound).prefix(request.page.count).map(\.id)
         default:
+            var request = request
             guard let id = request.run else { throw ReviewWorkerError.invalid("A run ID is required.") }
             let lease = try readLease(id)
             defer { withExtendedLifetime(lease) {} }
             _ = try snapshot(id)
+            if let limit = limits[id] {
+                if let range = request.range, range.segment != limit.segment || range.first < limit.first || range.end > limit.end {
+                    throw ReviewWorkerError.invalid("The requested samples are outside the approved interval.")
+                }
+                guard request.operation != .fixture_replay && request.operation != .interruption else {
+                    throw ReviewWorkerError.invalid("This tool requires approval for the whole run.")
+                }
+                request.visibleSelection = selections[id]
+            }
             if request.operation == .fixture_replay {
-                let approved = Set(runs.map(\.id))
+                let approved = Set(runs.map(\.id)).subtracting(limits.keys)
                 guard let template = try FixtureTemplateStudy.templates(store).first(where: { $0.id == request.template }),
-                      template.training.allSatisfy({ approved.contains($0.run) }),
+                      approved.contains(id), template.training.allSatisfy({ approved.contains($0.run) }),
                       template.noise.map({ approved.contains($0.run) }) ?? true else {
                     throw ReviewWorkerError.invalid("Approve the fixture template’s training and noise runs to use it.")
                 }
@@ -186,7 +218,8 @@ nonisolated struct ProjectReview: Sendable {
         guard let allowed = byID[id] else {
             throw ReviewWorkerError.invalid("This run is outside the approved Project review.")
         }
-        guard try store.openRun(id) == allowed else { throw ReviewWorkerError.stale }
+        guard try store.openRun(id) == allowed, let proof = pinned[id] else { throw ReviewWorkerError.stale }
+        try proof.verify(.init(store: store, run: allowed))
         return allowed
     }
 

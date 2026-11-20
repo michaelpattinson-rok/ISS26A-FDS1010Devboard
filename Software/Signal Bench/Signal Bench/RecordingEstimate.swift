@@ -13,7 +13,7 @@ nonisolated struct RecordingEstimate: Sendable {
         guard StreamWire.customRates.contains(rate), (0...StreamWire.maxDuration).contains(seconds) else { return nil }
         let configured = board.rate(rate)
         let n = Int64(averaging?.count ?? 1)
-        let bytes = Int64(PicoAverage.stride(averaging))
+        let bytes = Int64(PicoAverage.stride(averaging, board: board))
         let frameSize = board == .unoR4 ? Int64(1024) : Int64(StreamWire.maxSamples)
         conversions = Int64((configured * seconds).rounded())
         readings = conversions / n

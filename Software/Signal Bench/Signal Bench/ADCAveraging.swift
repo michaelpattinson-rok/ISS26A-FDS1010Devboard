@@ -134,15 +134,17 @@ nonisolated enum PicoAverage {
     static let wireFlag: UInt32 = 4
     static let version = 1
 
-    static func stride(_ factor: ADCAveraging?) -> Int {
+    static func flag(_ board: AcquisitionBoard) -> UInt32 { board == .unoR4 ? 16 : wireFlag }
+
+    static func stride(_ factor: ADCAveraging?, board: AcquisitionBoard = .picoW) -> Int {
         guard let factor else { return 2 }
-        return (15 + 4 * factor.shift + 7) / 8
+        return (board.bits + 3 + 4 * factor.shift + 7) / 8
     }
 
-    static func group(_ bytes: UnsafeRawBufferPointer, offset: Int, first: UInt64, factor: ADCAveraging) -> ADCAveraging.Group? {
-        let n = factor.count, sumBits = 12 + factor.shift, countBits = 1 + factor.shift
+    static func group(_ bytes: UnsafeRawBufferPointer, offset: Int, first: UInt64, factor: ADCAveraging, board: AcquisitionBoard = .picoW) -> ADCAveraging.Group? {
+        let n = factor.count, sumBits = board.bits + factor.shift, countBits = 1 + factor.shift
         var packed: UInt64 = 0
-        for i in 0..<stride(factor) { packed |= UInt64(bytes[offset + i]) << (8 * i) }
+        for i in 0..<stride(factor, board: board) { packed |= UInt64(bytes[offset + i]) << (8 * i) }
         let mask = (UInt64(1) << countBits) - 1
         let sum = packed & ((UInt64(1) << sumBits) - 1)
         let errors = Int((packed >> sumBits) & mask)
@@ -150,16 +152,16 @@ nonisolated enum PicoAverage {
         let high = Int((packed >> (sumBits + 2 * countBits)) & mask)
         let ordinary = n - errors - low - high
         guard packed >> (sumBits + 3 * countBits) == 0, ordinary >= 0,
-              sum >= UInt64(high * 4095 + ordinary), sum <= UInt64(high * 4095 + ordinary * 4094) else { return nil }
+              sum >= UInt64(high * Int(board.maxCode) + ordinary), sum <= UInt64(high * Int(board.maxCode) + ordinary * (Int(board.maxCode) - 1)) else { return nil }
         return .init(first: first, count: n, sum: sum, adcErrors: errors, lowRail: low, highRail: high)
     }
 
-    static func groups(_ payload: Data, first: UInt64, factor: ADCAveraging) throws -> [ADCAveraging.Group] {
-        let size = stride(factor)
+    static func groups(_ payload: Data, first: UInt64, factor: ADCAveraging, board: AcquisitionBoard = .picoW) throws -> [ADCAveraging.Group] {
+        let size = stride(factor, board: board)
         guard payload.count.isMultiple(of: size) else { throw StreamFailure.protocolError("An averaged reading was truncated.") }
         return try payload.withUnsafeBytes { bytes in
             try (0..<(bytes.count / size)).map { index in
-                guard let value = group(bytes, offset: index * size, first: (first + UInt64(index)) * UInt64(factor.count), factor: factor) else {
+                guard let value = group(bytes, offset: index * size, first: (first + UInt64(index)) * UInt64(factor.count), factor: factor, board: board) else {
                     throw StreamFailure.protocolError("An averaged reading has impossible sum or quality counts.")
                 }
                 return value
