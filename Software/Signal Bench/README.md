@@ -1,5 +1,3 @@
-# Signal Bench Xcode project
+# Signal Bench downloads and source
 
-Use the [app guide](../README.md) for versions, acquisition, development and export. Open [Signal Bench.dmg](Signal%20Bench.dmg) for the signed application or [Signal Bench.xcodeproj](Signal%20Bench.xcodeproj) to build it. [Disk image SHA-256](SHA256SUMS.txt)
-
-For release verification, known limits and maintenance, see [Release and Maintenance](../Release%20and%20Maintenance.md).
+See the [Signal Bench guide](../README.md) for installation, recording, exports, verification, and maintenance. This folder contains the [signed disk image](Signal%20Bench.dmg), its [checksum](SHA256SUMS.txt), and the [Xcode project](Signal%20Bench.xcodeproj).

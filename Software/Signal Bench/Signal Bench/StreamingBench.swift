@@ -69,7 +69,11 @@ final class StreamingBench: ObservableObject {
         var id: Self { self }
     }
 
-    @Published var page = Page.overview
+    @Published var page = Page.overview {
+        didSet {
+            if let recordingMode = page.recordingMode { mode = recordingMode }
+        }
+    }
     @Published var defaults = ProjectDefaults()
     @Published var draftDecision: StreamRun?
     @Published var renamePrompt = false
@@ -77,14 +81,18 @@ final class StreamingBench: ObservableObject {
     @Published var project: StreamProjectStore?
     let localAI = LocalAISettings()
     @Published var runs: [StreamRunItem] = []
-    @Published var selection: UUID?
+    @Published var selection: UUID? {
+        didSet {
+            if let source = diagnosisSource, source.run != selection { diagnosisSource = nil }
+        }
+    }
     @Published var studySelection: UUID?
     @Published private(set) var timeline: RunTimelineRequest?
     @Published private(set) var timelineSaving = false
     @Published private(set) var timelineRevision = UUID()
     private var openingTimeline = false
     private var timelineHasChanges = false
-    @Published var mode = RecordingMode.main
+    private(set) var mode = RecordingMode.main
     @Published private(set) var boardHints: [String: AcquisitionBoard] = [:]
     @Published var ports = StreamRecorder.ports()
     @Published var port = StreamRecorder.ports().first ?? ""
@@ -592,7 +600,6 @@ final class StreamingBench: ObservableObject {
         sampleRate = run.settings.nominalRate
         adcAveraging = run.settings.picoAveraging
         calibratedContinuation = run
-        mode = .calibrated
         page = .calibrated
     }
 
@@ -984,7 +991,7 @@ final class StreamingBench: ObservableObject {
 
     func closeTimeline() {
         timelineHasChanges = false
-        timeline = nil
+        if timeline != nil { timeline = nil }
     }
 
     func timelineLoad(for request: RunTimelineRequest, waveform: Bool = true) async throws -> RunTimelineContent {

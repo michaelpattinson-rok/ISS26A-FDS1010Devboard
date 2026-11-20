@@ -60,13 +60,12 @@ struct StreamLibrary: View {
             selectedIDs = Set(entries.filter { $0.id == bench.selection }.map(\.id))
         }
         .onChange(of: bench.selection) { _, id in
-            if bench.diagnosisSource?.run != id { bench.diagnosisSource = nil }
             if let id, selectedIDs.contains(id) { return }
             selectedIDs = Set(entries.filter { $0.id == id }.map(\.id))
         }
         .onChange(of: entries.map(\.id)) { _, ids in
             let visible = selectedIDs.intersection(ids)
-            if visible != selectedIDs { select(visible) }
+            if visible != selectedIDs { updateListSelection(visible) }
         }
         .onChange(of: bench.exclusionJob?.id) { _, id in
             if id != nil { showingList = false }
@@ -75,8 +74,12 @@ struct StreamLibrary: View {
             if id != nil { showingList = false }
         }
 
-        .onChange(of: bench.renamePrompt, initial: true) { _, requested in
-            if requested && bench.selectedRun != nil { showRename = true; bench.renamePrompt = false }
+        .task(id: bench.renamePrompt ? bench.selectedRun?.id : nil) {
+            guard bench.renamePrompt, let id = bench.selectedRun?.id else { return }
+            await Task.yield()
+            guard !Task.isCancelled, bench.renamePrompt, bench.selectedRun?.id == id else { return }
+            showRename = true
+            bench.renamePrompt = false
         }
         .sheet(item: $bench.picoCardRequest) { request in
             PicoCardImportSheet(request: request) { entries, wiring, date in
@@ -173,7 +176,7 @@ struct StreamLibrary: View {
                                        description: Text(unfiltered ? "Start a recording to add it to this Project." : "Change the search or filters."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(entries, selection: Binding(get: { selectedIDs }, set: select)) { item in
+                List(entries, selection: Binding(get: { selectedIDs }, set: updateListSelection)) { item in
                     VStack(alignment: .leading, spacing: 3) {
                         Text(item.run?.name ?? "Unreadable run").font(.body.weight(.medium)).lineLimit(1)
                         if let run = item.run {
@@ -237,10 +240,27 @@ struct StreamLibrary: View {
         return "Save the selected runs together in one ZIP."
     }
 
+    private func updateListSelection(_ ids: Set<UUID>) {
+        guard ids != selectedIDs else { return }
+        selectedIDs = ids
+        let previous = bench.selection
+        let next = entries.first { ids.contains($0.id) }?.id
+        let project = bench.project?.identity.id
+        guard next != previous, previous.map(ids.contains) != true else { return }
+
+        // AppKit can write the binding while SwiftUI is reconciling the List.
+        DispatchQueue.main.async {
+            guard bench.project?.identity.id == project, bench.selection == previous,
+                  selectedIDs == ids else { return }
+            bench.selection = next
+        }
+    }
+
     private func select(_ ids: Set<UUID>) {
         selectedIDs = ids
         if let id = bench.selection, ids.contains(id) { return }
-        bench.selection = entries.first { ids.contains($0.id) }?.id
+        let next = entries.first { ids.contains($0.id) }?.id
+        if bench.selection != next { bench.selection = next }
     }
 
     private func requestBatchExport() {

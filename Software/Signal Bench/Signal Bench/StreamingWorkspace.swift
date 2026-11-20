@@ -138,7 +138,6 @@ struct StreamingWorkspace: View {
             if let project = bench.project { ProjectSettingsPane(bench: bench, project: project) }
         }
         .onChange(of: bench.page, initial: true) { _, page in
-            if let mode = page.recordingMode { bench.mode = mode }
             if page == .record { minutes = bench.defaults.minutes }
             rawWiringChecked = false
         }
